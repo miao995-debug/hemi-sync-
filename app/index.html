@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#16161a">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=0.1.2">
+<link rel="stylesheet" href="style.css?v=0.2.0">
 <title>賽博雷音</title>
 </head>
 <body>
@@ -54,7 +54,8 @@
   <section class="card">
     <h2>音色</h2>
     <div class="seg" role="group" aria-label="音色模式">
-      <button data-mode="tone">單音（音叉）</button>
+      <button data-mode="tone">音叉</button>
+      <button data-mode="bowl">頌缽</button>
       <button data-mode="voice">口型</button>
     </div>
     <label class="field">
@@ -68,6 +69,32 @@
     </div>
     <p id="sweepHint" class="muted small" hidden>從目前頻率慢慢往上掃到 1000 Hz。感覺到共振就按下方「記錄共振點」；碰任何頻率控制就停止掃頻。</p>
     <canvas id="spec" class="spec" aria-label="頻譜：聲道響應與各泛音"></canvas>
+  </section>
+
+  <!-- 頌缽 -->
+  <section class="card" id="bowlCard" hidden>
+    <h2>頌缽</h2>
+    <label class="field">
+      <span class="lbl">奏法</span>
+      <select id="strike">
+        <option value="0">磨缽（持續）</option>
+        <option value="5">每 5 秒敲一下</option>
+        <option value="8">每 8 秒敲一下</option>
+        <option value="12">每 12 秒敲一下</option>
+        <option value="20">每 20 秒敲一下</option>
+      </select>
+    </label>
+    <label class="field">
+      <span class="lbl">亮度 <output id="brightOut"></output></span>
+      <input type="range" id="bright" min="0" max="100" step="1">
+      <span class="ends small muted"><span>沉</span><span>亮</span></span>
+    </label>
+    <label class="field">
+      <span class="lbl">顫動 <output id="wobbleOut"></output></span>
+      <input type="range" id="wobble" min="0" max="100" step="1">
+      <span class="ends small muted"><span>平穩</span><span>嗡嗡顫</span></span>
+    </label>
+    <p class="muted small">共振頻率就是缽的基音，其餘泛音不是整數倍，這是缽聲的來源。顫動是缽自己的「嗡—嗡—」，比 4 Hz 慢，和腦中繞是兩回事；太強可能蓋過腦中繞的感覺。</p>
   </section>
 
   <!-- 口型 -->
@@ -92,7 +119,7 @@
       <span class="lbl">圓唇 <output id="roundOut"></output></span>
       <input type="range" id="round" min="0" max="100" step="1">
     </label>
-    <p id="toneNote" class="muted small" hidden>單音模式不使用口型。切到「口型」才會作用。</p>
+    <p id="toneNote" class="muted small" hidden>音叉模式不使用口型。切到「口型」才會作用。</p>
   </section>
 
   <!-- 雙耳節拍 -->
@@ -142,7 +169,7 @@
   <button id="recBtn">記錄共振點</button>
 </nav>
 
-<script type="module" src="app.js?v=0.1.2"></script>
-<p class="ver muted small">v0.1.2</p>
+<script type="module" src="app.js?v=0.2.0"></script>
+<p class="ver muted small">v0.2.0</p>
 </body>
 </html>

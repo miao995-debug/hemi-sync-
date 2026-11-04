@@ -49,6 +49,25 @@ export function partialAmp(k, f0, F, nasal) {
   return envelope(k * f0, F, nasal) / k;
 }
 
+/* ---------- 頌缽 ----------
+   缽的泛音不是整數倍（典型手工頌缽的模態比例約 1 : 2.76 : 5.18 : 8.16 …），這是它和音叉、人聲最大的差別。
+   每個模態其實是兩個靠得很近的頻率（缽不完全對稱），兩者互相拍出「嗡—嗡—」的慢顫動。
+   回傳固定長度的成分表（每模態兩個：主峰、雙峰），讓引擎的振盪器編號不會跳動。 */
+export const BOWL_RATIOS = [1, 2.76, 5.18, 8.16, 11.6, 15.5];
+export const BOWL_TAU = 18;   // 敲擊後基音的衰減時間常數（秒），越高的泛音衰減越快
+export function bowlParts(f0, bright, wobble) {
+  const p = 1.8 - 1.2 * bright;   // 亮度：高泛音隨頻率比衰減的斜率
+  const out = [];
+  BOWL_RATIOS.forEach((r, i) => {
+    const a = Math.pow(r, -p);
+    const split = wobble * (0.5 + 0.3 * i);   // 雙峰間距（Hz）＝顫動速度，基音最慢
+    const tau = BOWL_TAU / Math.pow(r, 0.8);
+    out.push({ f: r * f0 - split / 2, a, tau });
+    out.push({ f: r * f0 + split / 2, a: a * 0.7 * wobble, tau });
+  });
+  return out;
+}
+
 export const MAX_PARTIALS = 128;   // 基頻 40 Hz 時仍能涵蓋到 5000 Hz
 export function partialCount(f0, sampleRate) {
   return Math.max(1, Math.min(MAX_PARTIALS, Math.floor(Math.min(5000, sampleRate * 0.45) / f0)));
