@@ -314,6 +314,9 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+// 手動重新整理或離開網址會觸發 pagehide；系統直接殺掉程序則不會，標記才會留下
+window.addEventListener('pagehide', () => { try { localStorage.removeItem(AWAYKEY); } catch (e) {} });
+
 // 頁面被系統關掉後重新載入：從上次留下的標記推算
 (function checkKilled() {
   let a = null;
