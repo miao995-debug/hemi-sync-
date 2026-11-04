@@ -161,9 +161,12 @@ function makeWav() {
   const sr = 44100, a = 0.8 * 32767, wL = 2 * Math.PI * FL / sr, wR = 2 * Math.PI * FR / sr;
   return wavBlob(sr, sr * 30, i => [Math.round(a * Math.sin(wL * i)), Math.round(a * Math.sin(wR * i))]);
 }
-// 焦點代理用：1 秒、振幅只有 ±1（約 -90 dB），聽不見但系統視為有聲音
+// 焦點代理用：同樣的 200／204 Hz，約 -60 dBFS。
+// 要高於 Chrome 的「有聲」門檻（約 -72 dBFS），否則背景會被當成靜音媒體暫停（v1 用 -90 dB，3 分鐘就停）；
+// 又遠低於主聲音，會被完全蓋過。
 function makeQuietWav() {
-  return wavBlob(44100, 44100, i => (i & 1 ? [1, 1] : [-1, -1]));
+  const sr = 44100, a = 0.001 * 32767, wL = 2 * Math.PI * FL / sr, wR = 2 * Math.PI * FR / sr;
+  return wavBlob(sr, sr * 30, i => [Math.round(a * Math.sin(wL * i)), Math.round(a * Math.sin(wR * i))]);
 }
 
 function watchEl(el, name) {
