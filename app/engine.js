@@ -1,6 +1,6 @@
 // 賽博雷音：合成引擎（AudioWorklet）
 // 加法合成。右耳每個成分都比左耳剛好高 delta Hz（整組平移），所以不論音色如何，每個成分都貢獻同一個差頻。
-import { partialAmp, partialCount, bowlParts, MAX_PARTIALS } from './voice.js?v=0.2.1';
+import { partialAmp, partialCount, bowlParts, MAX_PARTIALS } from './voice.js?v=0.2.2';
 
 const TAU = Math.PI * 2;
 
@@ -95,7 +95,7 @@ class Engine extends AudioWorkletProcessor {
       for (let j = 0; j < bowl.length; j++) { tgt[j] = bowl[j].a; fq[j] = bowl[j].f; }
     } else {
       const K = partialCount(this.f0, sr);
-      for (let k = 1; k <= K; k++) { tgt[k - 1] = partialAmp(k, this.f0, p.F, p.nasal); fq[k - 1] = k * this.f0; }
+      for (let k = 1; k <= K; k++) { tgt[k - 1] = partialAmp(k, this.f0, p.F, p.nasal, p.sharp || 0); fq[k - 1] = k * this.f0; }
     }
     // 正規化成每耳 RMS 0.25（換音色、口型時響度大致不變）；用未衰減的振幅算，敲擊後的衰減才聽得出來
     let ss = 0;

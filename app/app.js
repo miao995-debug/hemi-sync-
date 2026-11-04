@@ -1,7 +1,7 @@
 // 賽博雷音：介面
 // 版本號：每次發布都要改這裡、index.html、engine.js 的 ?v=，避免手機用到快取的舊檔
-import { F_MIN, F_MAX, formants, envelope, partialAmp, partialCount, bowlParts, VOWELS } from './voice.js?v=0.2.1';
-const VERSION = '0.2.1';
+import { F_MIN, F_MAX, formants, envelope, partialAmp, partialCount, bowlParts, tuneFormants, padPos, VOWELS } from './voice.js?v=0.2.2';
+const VERSION = '0.2.2';
 
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
@@ -11,7 +11,7 @@ const PARTS = ['整體', '頭頂', '前額', '眉心', '鼻腔', '上顎', '喉�
 /* ---------- 設定（集中在單一物件：存檔、套用紀錄、未來紀錄共用） ---------- */
 const a0 = VOWELS.find(v => v.v === 'a');
 const DEF = {
-  mode: 'tone', f0: 200, delta: 4, x: a0.x, y: a0.y, nasal: 0, round: 0,
+  mode: 'tone', f0: 200, delta: 4, x: a0.x, y: a0.y, nasal: 0, round: 0, tune: 0,
   bright: 40, wobble: 40, strike: 0, knock: 50, mallet: 'soft',
   bal: 0, mix: 0, vol: 35, limit: 30, headset: 'OpenSwim Pro', fine: false,
 };
@@ -30,10 +30,15 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 /* ---------- 音訊 ---------- */
 let ctx = null, node = null, playing = false, endAt = 0;
 
+// 口型 → 實際共振峰（含共振優先）。共振優先 0% 時就是原本的 formants()
+function voiceTract() {
+  const F = formants(S.x, S.y, S.round / 100);
+  return tuneFormants(F, S.f0, S.tune / 100);
+}
 function engineParams() {
   const b = S.bal / 100;
   return {
-    mode: S.mode, f0: S.f0, delta: S.delta, F: formants(S.x, S.y, S.round / 100), nasal: S.nasal / 100,
+    mode: S.mode, f0: S.f0, delta: S.delta, F: voiceTract().F, nasal: S.nasal / 100, sharp: S.tune / 100,
     bright: S.bright / 100, wobble: S.wobble / 100, strike: S.strike,
     knock: S.knock / 100, mallet: S.mallet,
     gL: b > 0 ? 1 - b : 1, gR: b < 0 ? 1 + b : 1, mix: S.mix / 100,
@@ -161,6 +166,7 @@ function bindRange(id, key, fmt) {
 const syncers = [
   bindRange('nasal', 'nasal', v => v + '%'),
   bindRange('round', 'round', v => v + '%'),
+  bindRange('tune', 'tune', v => v + '%'),
   bindRange('delta', 'delta', v => v.toFixed(1) + ' Hz' + (v >= 4 && v < 8 ? '（θ）' : v === 0 ? '（無節拍）' : '')),
   bindRange('bal', 'bal', v => v === 0 ? '置中' : v < 0 ? `偏左 ${-v}%` : `偏右 ${v}%`),
   bindRange('mix', 'mix', v => v + '%'),
@@ -258,6 +264,14 @@ function drawPad() {
     g.globalAlpha = 0.75; g.beginPath(); g.arc(p.s.x * w, p.s.y * h, 4.5, 0, Math.PI * 2); g.fill();
   }
   g.globalAlpha = 1;
+  // 共振優先：實際口型（被拉向泛音後）畫空心圈，和手指位置連一條線
+  if (S.tune > 0 && S.mode === 'voice') {
+    const t = voiceTract(), r = 1 - 0.08 * S.round / 100, r2 = 1 - 0.30 * S.round / 100;
+    const q = padPos(t.F[0] / r, t.F[1] / r2), qx = clamp(q.x, 0, 1) * w, qy = clamp(q.y, 0, 1) * h;
+    g.strokeStyle = acc; g.lineWidth = 1.5; g.setLineDash([3, 3]);
+    g.beginPath(); g.moveTo(S.x * w, S.y * h); g.lineTo(qx, qy); g.stroke(); g.setLineDash([]);
+    g.lineWidth = 2; g.beginPath(); g.arc(qx, qy, 8, 0, Math.PI * 2); g.stroke();
+  }
   // 目前位置
   const cx = S.x * w, cy = S.y * h;
   g.strokeStyle = acc; g.lineWidth = 2;
@@ -279,17 +293,19 @@ function drawSpec() {
   const p = engineParams();
   if (S.mode === 'voice') {
     let mx = 0; const env = [];
-    for (let i = 0; i <= 200; i++) { const f = 20 + i / 200 * (FMAXV - 20); const e = envelope(f, p.F, p.nasal); env.push([f, e]); mx = Math.max(mx, e); }
+    for (let i = 0; i <= 400; i++) { const f = 20 + i / 400 * (FMAXV - 20); const e = envelope(f, p.F, p.nasal, p.sharp); env.push([f, e]); mx = Math.max(mx, e); }
     g.strokeStyle = mute; g.lineWidth = 1.5; g.beginPath();
     env.forEach(([f, e], i) => { const db = Math.max(floorDb, 20 * Math.log10(e / mx)); (i ? g.lineTo : g.moveTo).call(g, X(f), Y(db)); });
     g.stroke();
     const K = partialCount(S.f0, 48000); let am = 0; const amps = [];
-    for (let k = 1; k <= K; k++) { const a = partialAmp(k, S.f0, p.F, p.nasal); amps.push(a); am = Math.max(am, a); }
-    g.strokeStyle = acc; g.lineWidth = 2;
+    for (let k = 1; k <= K; k++) { const a = partialAmp(k, S.f0, p.F, p.nasal, p.sharp); amps.push(a); am = Math.max(am, a); }
+    const t = voiceTract(), lit = new Set(t.k.filter((k, i) => t.hit[i]));
     amps.forEach((a, i) => {
       const f = (i + 1) * S.f0; if (f > FMAXV) return;
-      const db = Math.max(floorDb, 20 * Math.log10(a / am));
+      const db = Math.max(floorDb, 20 * Math.log10(a / am)), on = lit.has(i + 1);
+      g.strokeStyle = on ? css('--dot') : acc; g.lineWidth = on ? 4 : 2;
       g.beginPath(); g.moveTo(X(f), Y(floorDb)); g.lineTo(X(f), Y(db)); g.stroke();
+      if (on) { g.fillStyle = css('--dot'); g.textAlign = 'left'; g.textBaseline = 'top'; g.fillText('H' + (i + 1), X(f) + 4, 16); }
     });
     g.fillStyle = mute; g.textAlign = 'left'; g.textBaseline = 'top';
     p.F.forEach((F, i) => g.fillText('F' + (i + 1), X(F) + 3, 2));
@@ -331,9 +347,9 @@ function changed() {
   document.title = title; $('.top h1').textContent = title;
   $('#voiceCard').hidden = bowl;
   $('#toneNote').hidden = voice;
-  const [F1, F2] = formants(S.x, S.y, S.round / 100);
-  const nv = nearestVowel();
-  $('#padOut').textContent = `F1 ${Math.round(F1)}・F2 ${Math.round(F2)} Hz・${nv.d < 0.06 ? '' : '最接近 '}${nv.v}`;
+  const t = voiceTract(), [F1, F2] = t.F;
+  const nv = nearestVowel(), tag = i => t.hit[i] ? `（對準 H${t.k[i]}）` : '';
+  $('#padOut').textContent = `F1 ${Math.round(F1)}${tag(0)}・F2 ${Math.round(F2)}${tag(1)} Hz・${nv.d < 0.06 ? '' : '最接近 '}${nv.v}`;
   redraw();
 }
 function syncAll() {
@@ -368,8 +384,8 @@ function openRec() {
   $('#logCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 function snapshot() {
-  const { mode, f0, delta, x, y, nasal, round, bright, wobble, strike, knock, mallet, bal, mix } = S;
-  return { mode, f0, delta, x, y, nasal, round, bright, wobble, strike, knock, mallet, bal, mix };
+  const { mode, f0, delta, x, y, nasal, round, tune, bright, wobble, strike, knock, mallet, bal, mix } = S;
+  return { mode, f0, delta, x, y, nasal, round, tune, bright, wobble, strike, knock, mallet, bal, mix };
 }
 $('#recBtn').onclick = openRec;
 $('#recCancel').onclick = () => { form.hidden = true; };
@@ -390,7 +406,7 @@ function renderPoints() {
   $('#points').innerHTML = list.map(p => {
     const d = new Date(p.t);
     const when = `${d.getMonth() + 1}/${d.getDate()} ${d.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' })}`;
-    const tone = p.s.mode === 'voice' ? `口型 ${vowelLabel(p.s)}` : p.s.mode === 'bowl' ? '頌缽' : '單音';
+    const tone = p.s.mode === 'voice' ? `口型 ${vowelLabel(p.s)}${p.s.tune ? `・共振優先 ${p.s.tune}%` : ''}` : p.s.mode === 'bowl' ? '頌缽' : '單音';
     return `<li data-id="${p.id}"><div class="info"><div>${esc(p.parts.join('、') || '（未選部位）')}${p.note ? '・' + esc(p.note) : ''}</div>
       <div class="meta">${when}・${tone}・${p.s.f0.toFixed(1)} Hz・差頻 ${p.s.delta} Hz・${esc(p.headset)}</div></div>
       <button data-act="apply">套用</button><button data-act="del" aria-label="刪除">刪除</button></li>`;
@@ -399,7 +415,7 @@ function renderPoints() {
 $('#points').onclick = e => {
   const b = e.target.closest('button'); if (!b) return;
   const id = +b.closest('li').dataset.id, p = points.find(x => x.id === id); if (!p) return;
-  if (b.dataset.act === 'apply') { Object.assign(S, { bright: DEF.bright, wobble: DEF.wobble, strike: DEF.strike, knock: DEF.knock, mallet: DEF.mallet }, p.s); syncAll(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+  if (b.dataset.act === 'apply') { Object.assign(S, { tune: DEF.tune, bright: DEF.bright, wobble: DEF.wobble, strike: DEF.strike, knock: DEF.knock, mallet: DEF.mallet }, p.s); syncAll(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
   if (b.dataset.act === 'del' && confirm('刪除這筆共振點？')) {
     points = points.filter(x => x.id !== id); store(PKEY, points); renderPoints(); redraw();
   }

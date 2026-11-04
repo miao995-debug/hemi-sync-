@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#16161a">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=0.2.1">
+<link rel="stylesheet" href="style.css?v=0.2.2">
 <title>賽博雷音</title>
 </head>
 <body>
@@ -133,6 +133,12 @@
       <span class="lbl">圓唇 <output id="roundOut"></output></span>
       <input type="range" id="round" min="0" max="100" step="1">
     </label>
+    <label class="field">
+      <span class="lbl">共振優先 <output id="tuneOut"></output></span>
+      <input type="range" id="tune" min="0" max="100" step="1">
+      <span class="ends small muted"><span>咬字清楚</span><span>共振最強</span></span>
+    </label>
+    <p class="muted small">把共振峰往最近的泛音拉：被對準的泛音會特別響，母音跟著變形。空心圈是實際的口型；頻譜上亮起的泛音就是被對準的那根。0% 和原本完全一樣。</p>
     <p id="toneNote" class="muted small" hidden>音叉模式不使用口型。切到「口型」才會作用。</p>
   </section>
 
@@ -183,7 +189,7 @@
   <button id="recBtn">記錄共振點</button>
 </nav>
 
-<script type="module" src="app.js?v=0.2.1"></script>
-<p class="ver muted small">v0.2.1</p>
+<script type="module" src="app.js?v=0.2.2"></script>
+<p class="ver muted small">v0.2.2</p>
 </body>
 </html>

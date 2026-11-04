@@ -34,9 +34,10 @@ function res(f, F, B) {
   return (F * F + b * b) / Math.sqrt(((f - F) ** 2 + b * b) * ((f + F) ** 2 + b * b));
 }
 
-// 頻率 f 處的聲道響應（相對值）。F = [F1, F2, F3]，nasal 0–1
-export function envelope(f, F, nasal) {
-  let h = res(f, F[0], 80 * (1 + 1.5 * nasal)) * res(f, F[1], 90) * res(f, F[2], 150);
+// 頻率 f 處的聲道響應（相對值）。F = [F1, F2, F3]，nasal 0–1，sharp 0–1（共振優先時共振峰變窄）
+export function envelope(f, F, nasal, sharp = 0) {
+  const w = 1 - 0.5 * sharp;
+  let h = res(f, F[0], 80 * (1 + 1.5 * nasal) * w) * res(f, F[1], 90 * w) * res(f, F[2], 150 * w);
   if (nasal > 0) {
     const zero = 1 - 0.85 * Math.exp(-(((f - 1000) / 250) ** 2));   // 鼻腔反共振
     h *= (1 - nasal) + nasal * res(f, 270, 120) * zero;              // 鼻腔共振
@@ -45,8 +46,23 @@ export function envelope(f, F, nasal) {
 }
 
 // 第 k 個泛音（k 從 1 起）的相對振幅：聲源 1/k × 聲道響應
-export function partialAmp(k, f0, F, nasal) {
-  return envelope(k * f0, F, nasal) / k;
+export function partialAmp(k, f0, F, nasal, sharp = 0) {
+  return envelope(k * f0, F, nasal, sharp) / k;
+}
+
+/* ---------- 共振優先 ----------
+   把 F1、F2 往最近的泛音（k × f0）拉，p = 0 不動（咬字最清楚），p = 1 正好壓在泛音上（該泛音被放大最多，母音變形）。
+   回傳調整後的 [F1, F2, F3]，以及兩個共振峰各自最近的泛音編號與是否「對準」（落在共振峰半頻寬內）。 */
+export const ALIGN_HALF_BW = [40, 45];   // 對準的判定：距離小於共振峰半頻寬（Hz）
+export function tuneFormants(F, f0, p) {
+  const near = f => Math.max(1, Math.round(f / f0));
+  let k1 = near(F[0]), k2 = near(F[1]);
+  if (k2 <= k1) k2 = k1 + 1;                          // 兩個共振峰不搶同一根泛音
+  const pull = (f, k) => f * Math.pow(k * f0 / f, p);  // 對數空間內插
+  const T = [pull(F[0], k1), pull(F[1], k2), F[2]];
+  if (T[2] < T[1] + 200) T[2] = T[1] + 200;
+  const hit = [Math.abs(T[0] - k1 * f0) < ALIGN_HALF_BW[0], Math.abs(T[1] - k2 * f0) < ALIGN_HALF_BW[1]];
+  return { F: T, k: [k1, k2], hit };
 }
 
 /* ---------- 頌缽 ----------
