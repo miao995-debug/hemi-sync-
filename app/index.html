@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#16161a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css?v=0.1.0">
+<title>賽博雷音</title>
+</head>
+<body>
+<header class="top">
+  <h1>賽博雷音</h1>
+  <p class="sub">4 Hz 在腦中繞，音色找共振。</p>
+</header>
+
+<div id="unsupported" class="banner bad" hidden>這個瀏覽器不支援精確音訊引擎（需要 https 與 AudioWorklet）。請用 Chrome 開啟正式網址。</div>
+<div id="interrupted" class="banner" hidden>
+  聲音被中斷了（例如通話）。<button id="resume" class="primary">繼續</button>
+</div>
+
+<main class="layout">
+  <!-- 播放與安全 -->
+  <section class="card" id="playCard">
+    <div class="row between">
+      <div>
+        <div id="status" class="status">尚未播放</div>
+        <div id="remain" class="muted small"></div>
+      </div>
+      <button id="playBig" class="primary big">播放</button>
+    </div>
+    <label class="field">
+      <span class="lbl">音量 <output id="volOut"></output></span>
+      <input type="range" id="vol" min="0" max="100" step="1">
+    </label>
+    <div class="row wrap gap">
+      <label class="inline">單次上限
+        <select id="limit">
+          <option value="10">10 分鐘</option><option value="20">20 分鐘</option>
+          <option value="30">30 分鐘</option><option value="45">45 分鐘</option><option value="60">60 分鐘</option>
+        </select>
+      </label>
+      <label class="inline">耳機
+        <select id="headset">
+          <option>OpenSwim Pro</option><option>Bose QC</option><option>其他</option>
+        </select>
+      </label>
+    </div>
+    <p class="muted small">先把手機音量調低再播放。頭暈、耳鳴、頭痛就停。</p>
+  </section>
+
+  <!-- 音色 -->
+  <section class="card">
+    <h2>音色</h2>
+    <div class="seg" role="group" aria-label="音色模式">
+      <button data-mode="tone">單音（音叉）</button>
+      <button data-mode="voice">口型</button>
+    </div>
+    <label class="field">
+      <span class="lbl">共振頻率 <output id="f0Out"></output></span>
+      <input type="range" id="f0" min="0" max="1000" step="1">
+    </label>
+    <div class="row gap nudges">
+      <button data-nudge="-1">−1</button><button data-nudge="-0.1">−0.1</button>
+      <button data-nudge="0.1">+0.1</button><button data-nudge="1">+1</button>
+      <button id="sweep" class="grow">自動掃頻</button>
+    </div>
+    <p id="sweepHint" class="muted small" hidden>從目前頻率慢慢往上掃到 1000 Hz。感覺到共振就按下方「記錄共振點」；碰任何頻率控制就停止掃頻。</p>
+    <canvas id="spec" class="spec" aria-label="頻譜：聲道響應與各泛音"></canvas>
+  </section>
+
+  <!-- 口型 -->
+  <section class="card" id="voiceCard">
+    <h2>口型</h2>
+    <div class="padwrap">
+      <span class="ax top">閉口</span>
+      <span class="ax left">舌前</span>
+      <canvas id="pad" class="pad" tabindex="0" aria-label="口型觸控板：上下開口，左右舌位"></canvas>
+      <span class="ax right">舌後</span>
+      <span class="ax bottom">開口</span>
+    </div>
+    <div class="row between small">
+      <span id="padOut" class="muted"></span>
+      <label class="inline"><input type="checkbox" id="fine"> 精細模式</label>
+    </div>
+    <label class="field">
+      <span class="lbl">鼻音量 <output id="nasalOut"></output></span>
+      <input type="range" id="nasal" min="0" max="100" step="1">
+    </label>
+    <label class="field">
+      <span class="lbl">圓唇 <output id="roundOut"></output></span>
+      <input type="range" id="round" min="0" max="100" step="1">
+    </label>
+    <p id="toneNote" class="muted small" hidden>單音模式不使用口型。切到「口型」才會作用。</p>
+  </section>
+
+  <!-- 雙耳節拍 -->
+  <section class="card">
+    <h2>雙耳節拍</h2>
+    <label class="field">
+      <span class="lbl">差頻 <output id="deltaOut"></output></span>
+      <input type="range" id="delta" min="0" max="8" step="0.1">
+    </label>
+    <label class="field">
+      <span class="lbl">左右強度 <output id="balOut"></output></span>
+      <input type="range" id="bal" min="-100" max="100" step="1">
+    </label>
+    <details>
+      <summary>進階：混合度</summary>
+      <label class="field">
+        <span class="lbl">混合度 <output id="mixOut"></output></span>
+        <input type="range" id="mix" min="0" max="100" step="1">
+        <span class="ends small muted"><span>腦中繞</span><span>一鬆一緊</span></span>
+      </label>
+      <p class="muted small">每邊耳朵混進多少另一邊的聲音。不是按摩的主機制，平常保持 0。</p>
+    </details>
+  </section>
+
+  <!-- 共振點紀錄 -->
+  <section class="card" id="logCard">
+    <div class="row between">
+      <h2>共振點紀錄</h2>
+      <button id="export">匯出</button>
+    </div>
+    <form id="recForm" class="rec" hidden>
+      <p class="small">哪裡在共振？（可多選）</p>
+      <div id="parts" class="chips"></div>
+      <input id="note" type="text" placeholder="備註（可不填）" maxlength="200">
+      <div class="row gap">
+        <button type="submit" class="primary grow">儲存</button>
+        <button type="button" id="recCancel">取消</button>
+      </div>
+    </form>
+    <ul id="points" class="points"></ul>
+    <p id="noPoints" class="muted small">還沒有紀錄。找到共振時按下方「記錄共振點」。</p>
+  </section>
+</main>
+
+<nav class="bar">
+  <button id="playBar" class="primary">播放</button>
+  <button id="recBtn">記錄共振點</button>
+</nav>
+
+<script type="module" src="app.js?v=0.1.0"></script>
+<p class="ver muted small">v0.1.0</p>
+</body>
+</html>
