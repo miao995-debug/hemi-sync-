@@ -1,7 +1,7 @@
 // 賽博雷音：介面
 // 版本號：每次發布都要改這裡、index.html、engine.js 的 ?v=，避免手機用到快取的舊檔
-import { F_MIN, F_MAX, formants, envelope, partialAmp, partialCount, bowlParts, VOWELS } from './voice.js?v=0.2.0';
-const VERSION = '0.2.0';
+import { F_MIN, F_MAX, formants, envelope, partialAmp, partialCount, bowlParts, VOWELS } from './voice.js?v=0.2.1';
+const VERSION = '0.2.1';
 
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
@@ -12,7 +12,7 @@ const PARTS = ['整體', '頭頂', '前額', '眉心', '鼻腔', '上顎', '喉�
 const a0 = VOWELS.find(v => v.v === 'a');
 const DEF = {
   mode: 'tone', f0: 200, delta: 4, x: a0.x, y: a0.y, nasal: 0, round: 0,
-  bright: 40, wobble: 40, strike: 0,
+  bright: 40, wobble: 40, strike: 0, knock: 50, mallet: 'soft',
   bal: 0, mix: 0, vol: 35, limit: 30, headset: 'OpenSwim Pro', fine: false,
 };
 function load(key, def) {
@@ -35,6 +35,7 @@ function engineParams() {
   return {
     mode: S.mode, f0: S.f0, delta: S.delta, F: formants(S.x, S.y, S.round / 100), nasal: S.nasal / 100,
     bright: S.bright / 100, wobble: S.wobble / 100, strike: S.strike,
+    knock: S.knock / 100, mallet: S.mallet,
     gL: b > 0 ? 1 - b : 1, gR: b < 0 ? 1 + b : 1, mix: S.mix / 100,
   };
 }
@@ -165,6 +166,7 @@ const syncers = [
   bindRange('mix', 'mix', v => v + '%'),
   bindRange('bright', 'bright', v => v + '%'),
   bindRange('wobble', 'wobble', v => v + '%'),
+  bindRange('knock', 'knock', v => v + '%'),
 ];
 const syncVol = bindRange('vol', 'vol', v => v + '%');
 $('#vol').addEventListener('input', () => { if (playing) push({ gain: volGain(), fade: 0.05 }); });
@@ -174,6 +176,7 @@ $('#limit').onchange = e => {
   if (playing) endAt = Date.now() + S.limit * 60000;
 };
 $('#strike').onchange = e => { S.strike = +e.target.value; changed(); };
+$('#mallet').onchange = e => { S.mallet = e.target.value; changed(); };
 $('#headset').onchange = e => { S.headset = e.target.value; saveSoon(); };
 $('#fine').onchange = e => { S.fine = e.target.checked; saveSoon(); };
 
@@ -323,6 +326,7 @@ function changed() {
   const voice = S.mode === 'voice', bowl = S.mode === 'bowl';
   pad.classList.toggle('dim', !voice);
   $('#bowlCard').hidden = !bowl;
+  $('#strikeOpts').hidden = !(S.strike > 0);
   const title = bowl ? '缽音747' : '賽博雷音';   // 頌缽模式換名字，切走換回來
   document.title = title; $('.top h1').textContent = title;
   $('#voiceCard').hidden = bowl;
@@ -339,6 +343,7 @@ function syncAll() {
   $('#limit').value = String(S.limit);
   $('#headset').value = S.headset;
   $('#strike').value = String(S.strike);
+  $('#mallet').value = S.mallet;
   $('#fine').checked = !!S.fine;
   changed();
 }
@@ -363,8 +368,8 @@ function openRec() {
   $('#logCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 function snapshot() {
-  const { mode, f0, delta, x, y, nasal, round, bright, wobble, strike, bal, mix } = S;
-  return { mode, f0, delta, x, y, nasal, round, bright, wobble, strike, bal, mix };
+  const { mode, f0, delta, x, y, nasal, round, bright, wobble, strike, knock, mallet, bal, mix } = S;
+  return { mode, f0, delta, x, y, nasal, round, bright, wobble, strike, knock, mallet, bal, mix };
 }
 $('#recBtn').onclick = openRec;
 $('#recCancel').onclick = () => { form.hidden = true; };
@@ -394,7 +399,7 @@ function renderPoints() {
 $('#points').onclick = e => {
   const b = e.target.closest('button'); if (!b) return;
   const id = +b.closest('li').dataset.id, p = points.find(x => x.id === id); if (!p) return;
-  if (b.dataset.act === 'apply') { Object.assign(S, { bright: DEF.bright, wobble: DEF.wobble, strike: DEF.strike }, p.s); syncAll(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+  if (b.dataset.act === 'apply') { Object.assign(S, { bright: DEF.bright, wobble: DEF.wobble, strike: DEF.strike, knock: DEF.knock, mallet: DEF.mallet }, p.s); syncAll(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
   if (b.dataset.act === 'del' && confirm('刪除這筆共振點？')) {
     points = points.filter(x => x.id !== id); store(PKEY, points); renderPoints(); redraw();
   }

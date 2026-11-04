@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#16161a">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=0.2.0">
+<link rel="stylesheet" href="style.css?v=0.2.1">
 <title>賽博雷音</title>
 </head>
 <body>
@@ -84,6 +84,20 @@
         <option value="20">每 20 秒敲一下</option>
       </select>
     </label>
+    <div id="strikeOpts" hidden>
+      <label class="field">
+        <span class="lbl">槌</span>
+        <select id="mallet">
+          <option value="soft">皮槌（悶、柔）</option>
+          <option value="wood">木槌（脆、亮）</option>
+        </select>
+      </label>
+      <label class="field">
+        <span class="lbl">敲擊聲 <output id="knockOut"></output></span>
+        <input type="range" id="knock" min="0" max="100" step="1">
+        <span class="ends small muted"><span>只有餘音</span><span>敲得清楚</span></span>
+      </label>
+    </div>
     <label class="field">
       <span class="lbl">亮度 <output id="brightOut"></output></span>
       <input type="range" id="bright" min="0" max="100" step="1">
@@ -169,7 +183,7 @@
   <button id="recBtn">記錄共振點</button>
 </nav>
 
-<script type="module" src="app.js?v=0.2.0"></script>
-<p class="ver muted small">v0.2.0</p>
+<script type="module" src="app.js?v=0.2.1"></script>
+<p class="ver muted small">v0.2.1</p>
 </body>
 </html>
