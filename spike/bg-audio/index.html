@@ -217,6 +217,7 @@ async function start() {
           if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
           addLog('焦點代理被暫停（來電或通知列）→ 聲音停止', 'bad');
           $('#status').textContent = '已暫停（焦點代理）';
+          $('#play').textContent = '繼續播放'; $('#play').disabled = false;
         });
         keepEl.addEventListener('play', () => {
           if (!playing || !ctx) return;
@@ -224,6 +225,7 @@ async function start() {
           if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
           addLog('焦點代理恢復 → 聲音恢復', 'ok');
           $('#status').textContent = '播放中：' + LABEL[method];
+          $('#play').textContent = '播放'; $('#play').disabled = true;
         });
         await keepEl.play();
       } else {
@@ -256,7 +258,7 @@ function teardown() {
   if (ctx) { oscs.forEach(o => { try { o.stop(); } catch (e) {} }); ctx.close(); ctx = null; master = null; oscs = []; }
   playing = false;
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
-  $('#play').disabled = false; $('#stop').disabled = true;
+  $('#play').textContent = '播放'; $('#play').disabled = false; $('#stop').disabled = true;
   document.querySelectorAll('input[name=m]').forEach(r => r.disabled = false);
 }
 
@@ -267,7 +269,10 @@ function stop() {
   teardown();
   try { localStorage.removeItem(AWAYKEY); } catch (e) {}
 }
-$('#play').onclick = start;
+$('#play').onclick = () => {
+  if (playing && method === 'hybrid' && keepEl && keepEl.paused) keepEl.play();
+  else start();
+};
 $('#stop').onclick = stop;
 
 /* ---------- 背景監測 ---------- */
