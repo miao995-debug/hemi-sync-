@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#16161a">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=0.2.2">
+<link rel="stylesheet" href="style.css?v=0.3.0">
 <title>賽博雷音</title>
 </head>
 <body>
@@ -57,6 +57,7 @@
       <button data-mode="tone">音叉</button>
       <button data-mode="bowl">頌缽</button>
       <button data-mode="voice">口型</button>
+      <button data-mode="chant">念誦</button>
     </div>
     <label class="field">
       <span class="lbl">共振頻率 <output id="f0Out"></output></span>
@@ -69,6 +70,26 @@
     </div>
     <p id="sweepHint" class="muted small" hidden>從目前頻率慢慢往上掃到 1000 Hz。感覺到共振就按下方「記錄共振點」；碰任何頻率控制就停止掃頻。</p>
     <canvas id="spec" class="spec" aria-label="頻譜：聲道響應與各泛音"></canvas>
+  </section>
+
+  <!-- 念誦 -->
+  <section class="card" id="chantCard" hidden>
+    <h2>念誦</h2>
+    <textarea id="chantText" rows="3" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"
+      placeholder="輸入梵文轉寫（IAST）。一行一句；| 停頓、|| 長停頓；~ 把前一個音拉長一拍。"></textarea>
+    <div id="keys" class="keys" aria-label="特殊字母"></div>
+    <p class="muted small">文字只存在這支手機裡，不會上傳；匯出紀錄時也不含文字。</p>
+    <div id="chantView" class="chantview" aria-label="念到的位置"></div>
+    <label class="field">
+      <span class="lbl">念速 <output id="rateOut"></output></span>
+      <input type="range" id="rate" min="0.5" max="6" step="0.1">
+    </label>
+    <div class="row gap wrap">
+      <label class="inline"><input type="checkbox" id="loop"> 循環</label>
+      <button id="chantRestart">回到開頭</button>
+      <button id="offsetZero">偏移歸零</button>
+    </div>
+    <p class="muted small">點上面任一句，從那句開始念。下方口型觸控板在念誦時是「整段念法的偏移」：拖一下，整段往那個方向偏。鼻音量、圓唇、共振優先照常作用。</p>
   </section>
 
   <!-- 頌缽 -->
@@ -189,7 +210,7 @@
   <button id="recBtn">記錄共振點</button>
 </nav>
 
-<script type="module" src="app.js?v=0.2.2"></script>
-<p class="ver muted small">v0.2.2</p>
+<script type="module" src="app.js?v=0.3.0"></script>
+<p class="ver muted small">v0.3.0</p>
 </body>
 </html>

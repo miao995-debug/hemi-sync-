@@ -1,6 +1,6 @@
 // 賽博雷音：合成引擎（AudioWorklet）
 // 加法合成。右耳每個成分都比左耳剛好高 delta Hz（整組平移），所以不論音色如何，每個成分都貢獻同一個差頻。
-import { partialAmp, partialCount, bowlParts, MAX_PARTIALS } from './voice.js?v=0.2.2';
+import { partialAmp, partialCount, bowlParts, formants, tuneFormants, MAX_PARTIALS } from './voice.js?v=0.3.0';
 
 const TAU = Math.PI * 2;
 
@@ -17,6 +17,7 @@ class Engine extends AudioWorkletProcessor {
     this.p = {
       mode: 'tone', f0: 200, delta: 4, F: [730, 1100, 2700], nasal: 0,
       bright: 0.4, wobble: 0.4, strike: 0, knock: 0.5, mallet: 'soft',
+      chantSegs: null, chantId: '', rate: 3, loop: true, ox: 0, oy: 0, round: 0, tune: 0, seek: 0, seekN: 0,
       gL: 1, gR: 1, mix: 0, gain: 0, fade: 0.05,
     };
     Object.assign(this.p, (options && options.processorOptions) || {});
@@ -41,6 +42,8 @@ class Engine extends AudioWorkletProcessor {
       this.reL[k] = this.reR[k] = Math.cos(ph);
       this.imL[k] = this.imR[k] = Math.sin(ph);
     }
+    // 念誦：目前在第幾段、段內走了幾個時間單位（1 單位 = 1 / 念速 秒）
+    this.ci = 0; this.ct = 0; this.cg = 0; this.chantId = this.p.chantId; this.seekN = this.p.seekN; this.done = false;
     this.port.onmessage = e => Object.assign(this.p, e.data);
   }
 
@@ -71,11 +74,37 @@ class Engine extends AudioWorkletProcessor {
     this.kn = p.knock * (wood ? 1.6 : 2.2);
   }
 
+  // 念誦：推進時間，回傳此刻的口型 { x, y, nasal, gain }
+  chantStep(p, dt) {
+    const segs = p.chantSegs;
+    if (!segs || !segs.length) return null;
+    if (p.chantId !== this.chantId) { this.chantId = p.chantId; this.ci = 0; this.ct = 0; this.done = false; this.report(); }
+    if (p.seekN !== this.seekN) { this.seekN = p.seekN; this.ci = Math.min(segs.length - 1, Math.max(0, p.seek | 0)); this.ct = 0; this.done = false; this.report(); }
+    if (this.ci >= segs.length) this.ci = 0;
+    if (!this.done) {
+      this.ct += dt * Math.max(0.1, p.rate);
+      while (this.ct >= segs[this.ci][4]) {
+        this.ct -= segs[this.ci][4]; this.ci++;
+        if (this.ci >= segs.length) {
+          if (p.loop) this.ci = 0;
+          else { this.ci = segs.length - 1; this.ct = segs[this.ci][4]; this.done = true; this.port.postMessage({ done: true }); break; }
+        }
+        this.report();
+      }
+    }
+    const cur = segs[this.ci], prev = segs[this.ci > 0 ? this.ci - 1 : segs.length - 1];
+    const tr = Math.min(0.25, cur[4] * 0.5), k = tr > 0 ? Math.min(1, this.ct / tr) : 1, s = k * k * (3 - 2 * k);
+    const L = (a, b) => a + (b - a) * s;
+    return { x: L(prev[0], cur[0]), y: L(prev[1], cur[1]), nasal: L(prev[2], cur[2]), gain: this.done ? 0 : L(prev[3], cur[3]) };
+  }
+  report() { this.port.postMessage({ pos: this.ci }); }
+
   process(_inputs, outputs) {
     const out = outputs[0], L = out[0], R = out[1];
     if (!L || !R) return true;
     const n = L.length, sr = sampleRate, p = this.p, dt = n / sr;
     const k40 = 1 - Math.exp(-n / (0.04 * sr));                       // 40 ms 平滑
+    const k10 = 1 - Math.exp(-n / (0.01 * sr));                       // 念誦：10 ms，子音的凹陷才不會被抹平
     const kg = 1 - Math.exp(-n / (Math.max(0.005, p.fade) * sr));     // 音量淡入淡出
 
     this.f0 += (p.f0 - this.f0) * k40;
@@ -88,8 +117,16 @@ class Engine extends AudioWorkletProcessor {
     // 各成分的頻率與目標振幅（依「實際在發聲」的模式）
     const tgt = this.tgt, fq = this.fq, env = this.env, mode = this.cur;
     tgt.fill(0); fq.fill(0);
-    let bowl = null;
-    if (mode === 'tone') { tgt[0] = 1; fq[0] = this.f0; }
+    let bowl = null, chant = null;
+    if (mode === 'chant') {
+      chant = this.chantStep(p, dt);
+      if (chant) {
+        const cl = v => Math.min(1, Math.max(0, v));
+        const F = tuneFormants(formants(cl(chant.x + p.ox), cl(chant.y + p.oy), p.round), this.f0, p.tune).F;
+        const nasal = Math.max(p.nasal, chant.nasal), K = partialCount(this.f0, sr);
+        for (let k = 1; k <= K; k++) { tgt[k - 1] = partialAmp(k, this.f0, F, nasal, p.tune); fq[k - 1] = k * this.f0; }
+      }
+    } else if (mode === 'tone') { tgt[0] = 1; fq[0] = this.f0; }
     else if (mode === 'bowl') {
       bowl = bowlParts(this.f0, p.bright, p.wobble);
       for (let j = 0; j < bowl.length; j++) { tgt[j] = bowl[j].a; fq[j] = bowl[j].f; }
@@ -116,7 +153,10 @@ class Engine extends AudioWorkletProcessor {
       for (let j = 0; j < bowl.length; j++) tgt[j] *= env[j];
     }
 
-    const switching = p.mode !== this.cur, gate = switching ? 0 : norm;
+    const switching = p.mode !== this.cur;
+    let gate = switching ? 0 : norm;
+    // 念誦的音量起伏（子音凹陷、停頓）要在正規化之後乘，否則會被正規化抵消
+    if (chant) { this.cg = chant.gain; gate *= chant.gain; }
     // 敲擊瞬間用 4 ms 快速起音（平常 40 ms 平滑會讓槌擊變軟）
     const ka = this.attack > 0 ? 1 - Math.exp(-n / (0.004 * sr)) : k40;
     this.attack = Math.max(0, this.attack - dt);
@@ -124,7 +164,7 @@ class Engine extends AudioWorkletProcessor {
     L.fill(0); R.fill(0);
     for (let k = 0; k < MAX_PARTIALS; k++) {
       const a0 = this.amp[k];
-      let a1 = a0 + (tgt[k] * gate - a0) * (bowl ? ka : k40);
+      let a1 = a0 + (tgt[k] * gate - a0) * (bowl ? ka : chant ? k10 : k40);
       const fl = fq[k], fr = fl + this.delta;
       if (fl <= 0 || fr >= sr * 0.49) a1 = 0;
       this.amp[k] = a1;
@@ -136,6 +176,7 @@ class Engine extends AudioWorkletProcessor {
     }
     if (switching && peak < 1e-4) {   // 舊音色淡完了，換新音色
       this.cur = p.mode; this.amp.fill(0); env.fill(1); this.sinceStrike = 0;
+      if (p.mode === 'chant') { this.ci = 0; this.ct = 0; this.done = false; this.report(); }
       if (p.mode === 'bowl' && p.strike > 0) this.strike(p);
     }
 

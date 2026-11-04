@@ -1,7 +1,8 @@
 // 賽博雷音：介面
 // 版本號：每次發布都要改這裡、index.html、engine.js 的 ?v=，避免手機用到快取的舊檔
-import { F_MIN, F_MAX, formants, envelope, partialAmp, partialCount, bowlParts, tuneFormants, padPos, VOWELS } from './voice.js?v=0.2.2';
-const VERSION = '0.2.2';
+import { F_MIN, F_MAX, formants, envelope, partialAmp, partialCount, bowlParts, tuneFormants, padPos, VOWELS } from './voice.js?v=0.3.0';
+import { parseIAST, KEYS } from './chant.js?v=0.3.0';
+const VERSION = '0.3.0';
 
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
@@ -12,6 +13,7 @@ const PARTS = ['整體', '頭頂', '前額', '眉心', '鼻腔', '上顎', '喉�
 const a0 = VOWELS.find(v => v.v === 'a');
 const DEF = {
   mode: 'tone', f0: 200, delta: 4, x: a0.x, y: a0.y, nasal: 0, round: 0, tune: 0,
+  chantText: '', rate: 3, loop: true, ox: 0, oy: 0,
   bright: 40, wobble: 40, strike: 0, knock: 50, mallet: 'soft',
   bal: 0, mix: 0, vol: 35, limit: 30, headset: 'OpenSwim Pro', fine: false,
 };
@@ -35,9 +37,24 @@ function voiceTract() {
   const F = formants(S.x, S.y, S.round / 100);
   return tuneFormants(F, S.f0, S.tune / 100);
 }
+/* ---------- 念誦 ---------- */
+let chant = parseIAST(S.chantText || ''), chantPos = 0, seekTo = 0, seekN = 0;
+// 念誦此刻的口型目標（加上觸控板的偏移）
+function chantTarget() {
+  const sg = chant.segs[chantPos] || [0.5, 0.5, 0, 0];
+  return { x: clamp(sg[0] + S.ox, 0, 1), y: clamp(sg[1] + S.oy, 0, 1), nasal: Math.max(S.nasal / 100, sg[2]) };
+}
+// 此刻實際的共振峰：口型模式看手指位置，念誦模式看念到的音
+function tractNow() {
+  if (S.mode !== 'chant') return Object.assign(voiceTract(), { nasal: S.nasal / 100 });
+  const c = chantTarget();
+  return Object.assign(tuneFormants(formants(c.x, c.y, S.round / 100), S.f0, S.tune / 100), { nasal: c.nasal });
+}
 function engineParams() {
   const b = S.bal / 100;
   return {
+    round: S.round / 100, tune: S.tune / 100, ox: S.ox, oy: S.oy, rate: S.rate, loop: S.loop,
+    chantId: chant.id, seek: seekTo, seekN,
     mode: S.mode, f0: S.f0, delta: S.delta, F: voiceTract().F, nasal: S.nasal / 100, sharp: S.tune / 100,
     bright: S.bright / 100, wobble: S.wobble / 100, strike: S.strike,
     knock: S.knock / 100, mallet: S.mallet,
@@ -52,8 +69,12 @@ async function ensureEngine() {
   ctx = new AudioContext({ latencyHint: 'interactive' });
   await ctx.audioWorklet.addModule(new URL('./engine.js?v=' + VERSION, import.meta.url));
   node = new AudioWorkletNode(ctx, 'leiyin-engine', {
-    numberOfInputs: 0, outputChannelCount: [2], processorOptions: engineParams(),
+    numberOfInputs: 0, outputChannelCount: [2], processorOptions: Object.assign(engineParams(), { chantSegs: chant.segs }),
   });
+  node.port.onmessage = e => {
+    if ('pos' in e.data) setChantPos(e.data.pos);
+    if (e.data.done && playing) stop(1.5, '念完了');
+  };
   node.connect(ctx.destination);
   ctx.onstatechange = updateStatus;
 }
@@ -167,6 +188,7 @@ const syncers = [
   bindRange('nasal', 'nasal', v => v + '%'),
   bindRange('round', 'round', v => v + '%'),
   bindRange('tune', 'tune', v => v + '%'),
+  bindRange('rate', 'rate', v => `每秒約 ${v.toFixed(1)} 音節`),
   bindRange('delta', 'delta', v => v.toFixed(1) + ' Hz' + (v >= 4 && v < 8 ? '（θ）' : v === 0 ? '（無節拍）' : '')),
   bindRange('bal', 'bal', v => v === 0 ? '置中' : v < 0 ? `偏左 ${-v}%` : `偏右 ${v}%`),
   bindRange('mix', 'mix', v => v + '%'),
@@ -195,15 +217,19 @@ const pad = $('#pad');
 let drag = null;
 function padRect() { return pad.getBoundingClientRect(); }
 function setXY(x, y) { S.x = clamp(x, 0, 1); S.y = clamp(y, 0, 1); changed(); }
+function setOffset(x, y) { S.ox = clamp(x, -0.5, 0.5); S.oy = clamp(y, -0.5, 0.5); changed(); }
 pad.addEventListener('pointerdown', e => {
   pad.setPointerCapture(e.pointerId);
   const r = padRect();
-  if (S.fine) drag = { px: e.clientX, py: e.clientY, x: S.x, y: S.y, w: r.width, h: r.height };
+  // 念誦：拖動＝整條口型路徑的偏移（相對移動，不跳到手指位置）
+  if (S.mode === 'chant') drag = { off: true, px: e.clientX, py: e.clientY, x: S.ox, y: S.oy, w: r.width, h: r.height };
+  else if (S.fine) drag = { px: e.clientX, py: e.clientY, x: S.x, y: S.y, w: r.width, h: r.height };
   else { drag = { abs: true }; setXY((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height); }
 });
 pad.addEventListener('pointermove', e => {
   if (!drag) return;
-  if (drag.abs) { const r = padRect(); setXY((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height); }
+  if (drag.off) { const m = S.fine ? 0.15 : 0.6; setOffset(drag.x + (e.clientX - drag.px) / drag.w * m, drag.y + (e.clientY - drag.py) / drag.h * m); }
+  else if (drag.abs) { const r = padRect(); setXY((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height); }
   else setXY(drag.x + (e.clientX - drag.px) / drag.w * 0.15, drag.y + (e.clientY - drag.py) / drag.h * 0.15);
 });
 const endDrag = () => { drag = null; };
@@ -214,7 +240,8 @@ pad.addEventListener('keydown', e => {
   const d = { ArrowLeft: [-st, 0], ArrowRight: [st, 0], ArrowUp: [0, -st], ArrowDown: [0, st] }[e.key];
   if (!d) return;
   e.preventDefault();
-  setXY(S.x + d[0], S.y + d[1]);
+  if (S.mode === 'chant') setOffset(S.ox + d[0], S.oy + d[1]);
+  else setXY(S.x + d[0], S.y + d[1]);
 });
 
 function nearestVowel() {
@@ -272,8 +299,23 @@ function drawPad() {
     g.beginPath(); g.moveTo(S.x * w, S.y * h); g.lineTo(qx, qy); g.stroke(); g.setLineDash([]);
     g.lineWidth = 2; g.beginPath(); g.arc(qx, qy, 8, 0, Math.PI * 2); g.stroke();
   }
+  if (S.mode === 'chant') { drawChantPath(g, w, h, acc); return; }
   // 目前位置
   const cx = S.x * w, cy = S.y * h;
+  g.strokeStyle = acc; g.lineWidth = 2;
+  g.beginPath(); g.arc(cx, cy, 14, 0, Math.PI * 2); g.stroke();
+  g.fillStyle = acc; g.beginPath(); g.arc(cx, cy, 5, 0, Math.PI * 2); g.fill();
+}
+
+// 念誦：這一句的母音路徑（淡線）＋此刻念到的口型（圓點）
+function drawChantPath(g, w, h, acc) {
+  const sg = chant.segs[chantPos];
+  if (sg) {
+    const pts = chant.segs.filter(z => z[5] === sg[5] && z[3] >= 0.9).map(z => [clamp(z[0] + S.ox, 0, 1) * w, clamp(z[1] + S.oy, 0, 1) * h]);
+    g.strokeStyle = acc; g.globalAlpha = 0.35; g.lineWidth = 2; g.beginPath();
+    pts.forEach(([x, y], i) => (i ? g.lineTo : g.moveTo).call(g, x, y)); g.stroke(); g.globalAlpha = 1;
+  }
+  const c = chantTarget(), cx = c.x * w, cy = c.y * h;
   g.strokeStyle = acc; g.lineWidth = 2;
   g.beginPath(); g.arc(cx, cy, 14, 0, Math.PI * 2); g.stroke();
   g.fillStyle = acc; g.beginPath(); g.arc(cx, cy, 5, 0, Math.PI * 2); g.fill();
@@ -291,7 +333,8 @@ function drawSpec() {
     g.textAlign = 'center'; g.fillText(f / 1000 + 'k', X(f), h);
   }
   const p = engineParams();
-  if (S.mode === 'voice') {
+  if (S.mode === 'voice' || S.mode === 'chant') {
+    const tn = tractNow(); p.F = tn.F; p.nasal = tn.nasal;
     let mx = 0; const env = [];
     for (let i = 0; i <= 400; i++) { const f = 20 + i / 400 * (FMAXV - 20); const e = envelope(f, p.F, p.nasal, p.sharp); env.push([f, e]); mx = Math.max(mx, e); }
     g.strokeStyle = mute; g.lineWidth = 1.5; g.beginPath();
@@ -299,7 +342,7 @@ function drawSpec() {
     g.stroke();
     const K = partialCount(S.f0, 48000); let am = 0; const amps = [];
     for (let k = 1; k <= K; k++) { const a = partialAmp(k, S.f0, p.F, p.nasal, p.sharp); amps.push(a); am = Math.max(am, a); }
-    const t = voiceTract(), lit = new Set(t.k.filter((k, i) => t.hit[i]));
+    const t = tn, lit = new Set(t.k.filter((k, i) => t.hit[i]));
     amps.forEach((a, i) => {
       const f = (i + 1) * S.f0; if (f > FMAXV) return;
       const db = Math.max(floorDb, 20 * Math.log10(a / am)), on = lit.has(i + 1);
@@ -339,18 +382,28 @@ function changed() {
   push();
   saveSoon();
   $$('[data-mode]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === S.mode)));
-  const voice = S.mode === 'voice', bowl = S.mode === 'bowl';
-  pad.classList.toggle('dim', !voice);
+  const voice = S.mode === 'voice', bowl = S.mode === 'bowl', chanting = S.mode === 'chant';
+  pad.classList.toggle('dim', !(voice || chanting));
+  $('#chantCard').hidden = !chanting;
   $('#bowlCard').hidden = !bowl;
   $('#strikeOpts').hidden = !(S.strike > 0);
   const title = bowl ? '缽音747' : '賽博雷音';   // 頌缽模式換名字，切走換回來
   document.title = title; $('.top h1').textContent = title;
   $('#voiceCard').hidden = bowl;
-  $('#toneNote').hidden = voice;
-  const t = voiceTract(), [F1, F2] = t.F;
-  const nv = nearestVowel(), tag = i => t.hit[i] ? `（對準 H${t.k[i]}）` : '';
-  $('#padOut').textContent = `F1 ${Math.round(F1)}${tag(0)}・F2 ${Math.round(F2)}${tag(1)} Hz・${nv.d < 0.06 ? '' : '最接近 '}${nv.v}`;
+  $('#toneNote').hidden = S.mode !== 'tone';
+  updatePadOut();
   redraw();
+}
+function updatePadOut() {
+  const t = tractNow(), [F1, F2] = t.F, tag = i => t.hit[i] ? `（對準 H${t.k[i]}）` : '';
+  const fs = `F1 ${Math.round(F1)}${tag(0)}・F2 ${Math.round(F2)}${tag(1)} Hz`;
+  if (S.mode === 'chant') {
+    const sgn = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2);
+    $('#padOut').textContent = `${fs}・偏移 開口 ${sgn(S.oy)}、舌後 ${sgn(S.ox)}`;
+  } else {
+    const nv = nearestVowel();
+    $('#padOut').textContent = `${fs}・${nv.d < 0.06 ? '' : '最接近 '}${nv.v}`;
+  }
 }
 function syncAll() {
   setF0(S.f0, true);
@@ -361,6 +414,8 @@ function syncAll() {
   $('#strike').value = String(S.strike);
   $('#mallet').value = S.mallet;
   $('#fine').checked = !!S.fine;
+  $('#loop').checked = !!S.loop;
+  $('#chantText').value = S.chantText || '';
   changed();
 }
 window.addEventListener('resize', redraw);
@@ -384,6 +439,10 @@ function openRec() {
   $('#logCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 function snapshot() {
+  if (S.mode === 'chant') {
+    const { mode, f0, delta, nasal, round, tune, ox, oy, rate, bal, mix } = S, sg = chant.segs[chantPos];
+    return { mode, f0, delta, nasal, round, tune, ox, oy, rate, bal, mix, chant: { id: chant.id, line: sg ? sg[5] : 0 } };   // 不存經文
+  }
   const { mode, f0, delta, x, y, nasal, round, tune, bright, wobble, strike, knock, mallet, bal, mix } = S;
   return { mode, f0, delta, x, y, nasal, round, tune, bright, wobble, strike, knock, mallet, bal, mix };
 }
@@ -406,7 +465,7 @@ function renderPoints() {
   $('#points').innerHTML = list.map(p => {
     const d = new Date(p.t);
     const when = `${d.getMonth() + 1}/${d.getDate()} ${d.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' })}`;
-    const tone = p.s.mode === 'voice' ? `口型 ${vowelLabel(p.s)}${p.s.tune ? `・共振優先 ${p.s.tune}%` : ''}` : p.s.mode === 'bowl' ? '頌缽' : '單音';
+    const tone = p.s.mode === 'chant' ? `念誦 第 ${p.s.chant.line + 1} 句${p.s.chant.id === chant.id ? '' : '（別段文字）'}` : p.s.mode === 'voice' ? `口型 ${vowelLabel(p.s)}${p.s.tune ? `・共振優先 ${p.s.tune}%` : ''}` : p.s.mode === 'bowl' ? '頌缽' : '單音';
     return `<li data-id="${p.id}"><div class="info"><div>${esc(p.parts.join('、') || '（未選部位）')}${p.note ? '・' + esc(p.note) : ''}</div>
       <div class="meta">${when}・${tone}・${p.s.f0.toFixed(1)} Hz・差頻 ${p.s.delta} Hz・${esc(p.headset)}</div></div>
       <button data-act="apply">套用</button><button data-act="del" aria-label="刪除">刪除</button></li>`;
@@ -415,13 +474,21 @@ function renderPoints() {
 $('#points').onclick = e => {
   const b = e.target.closest('button'); if (!b) return;
   const id = +b.closest('li').dataset.id, p = points.find(x => x.id === id); if (!p) return;
+  if (b.dataset.act === 'apply' && p.s.chant) {
+    const { chant: c, ...rest } = p.s;
+    Object.assign(S, { ox: 0, oy: 0, rate: DEF.rate }, rest); syncAll();
+    const ln = chant.lines[c.line];
+    if (c.id === chant.id && ln) seekChant(ln.seg);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    return;
+  }
   if (b.dataset.act === 'apply') { Object.assign(S, { tune: DEF.tune, bright: DEF.bright, wobble: DEF.wobble, strike: DEF.strike, knock: DEF.knock, mallet: DEF.mallet }, p.s); syncAll(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
   if (b.dataset.act === 'del' && confirm('刪除這筆共振點？')) {
     points = points.filter(x => x.id !== id); store(PKEY, points); renderPoints(); redraw();
   }
 };
 $('#export').onclick = () => {
-  const blob = new Blob([JSON.stringify({ app: '賽博雷音', exported: new Date().toISOString(), settings: S, points }, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify({ app: '賽博雷音', exported: new Date().toISOString(), settings: Object.assign({}, S, { chantText: undefined }), points }, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   const d = new Date(), ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
   a.href = URL.createObjectURL(blob); a.download = `leiyin-${ymd}.json`; a.click();
@@ -430,3 +497,68 @@ $('#export').onclick = () => {
 
 syncAll();
 renderPoints();
+
+/* ---------- 念誦介面 ---------- */
+const view = $('#chantView');
+let spanOfSeg = [], lastSpan = -1, lastLine = -1;
+function renderChant() {
+  const text = (S.chantText || '').normalize('NFC');
+  spanOfSeg = new Array(chant.segs.length).fill(-1);
+  let html = '', n = 0;
+  chant.lines.forEach((ln, L) => {
+    const end = L + 1 < chant.lines.length ? chant.lines[L + 1].seg : chant.segs.length;
+    let cur = ln.s, part = '';
+    for (let j = ln.seg; j < end; j++) {
+      const m = chant.meta[j];
+      if (m.s >= ln.e || m.s < cur) { spanOfSeg[j] = n - 1; continue; }
+      part += esc(text.slice(cur, m.s)) + `<span id="cs${n}">${esc(text.slice(m.s, Math.min(m.e, ln.e)))}</span>`;
+      spanOfSeg[j] = n++; cur = Math.min(m.e, ln.e);
+    }
+    part += esc(text.slice(cur, ln.e));
+    html += `<div class="cl" data-line="${L}"><span class="no">${L + 1}</span>${part}</div>`;
+  });
+  view.innerHTML = html || '<p class="muted small">還沒有文字。</p>';
+  lastSpan = -1; lastLine = -1;
+  setChantPos(Math.min(chantPos, Math.max(0, chant.segs.length - 1)));
+}
+function setChantPos(i) {
+  chantPos = i;
+  const sg = chant.segs[i];
+  const sp = spanOfSeg[i] ?? -1;
+  if (sp !== lastSpan) {
+    if (lastSpan >= 0) { const o = $('#cs' + lastSpan); if (o) o.classList.remove('on'); }
+    if (sp >= 0) { const o = $('#cs' + sp); if (o) o.classList.add('on'); }
+    lastSpan = sp;
+  }
+  const L = sg ? sg[5] : -1;
+  if (L !== lastLine) {
+    $$('#chantView .cl.cur').forEach(x => x.classList.remove('cur'));
+    const el = view.querySelector(`.cl[data-line="${L}"]`);
+    if (el) { el.classList.add('cur'); view.scrollTop = el.offsetTop - view.clientHeight / 3; }
+    lastLine = L;
+  }
+  if (S.mode === 'chant') { updatePadOut(); redraw(); }
+}
+function seekChant(seg) { seekTo = seg; seekN++; push(); setChantPos(seg); }
+view.onclick = e => { const el = e.target.closest('.cl'); if (el) { const ln = chant.lines[+el.dataset.line]; if (ln) seekChant(ln.seg); } };
+$('#chantRestart').onclick = () => seekChant(0);
+$('#offsetZero').onclick = () => setOffset(0, 0);
+$('#loop').onchange = e => { S.loop = e.target.checked; changed(); };
+let chantTimer = 0;
+function chantInput() {
+  clearTimeout(chantTimer);
+  chantTimer = setTimeout(() => {
+    S.chantText = $('#chantText').value;
+    chant = parseIAST(S.chantText); chantPos = 0;
+    if (node) node.port.postMessage({ chantSegs: chant.segs, chantId: chant.id });
+    renderChant(); changed();
+  }, 500);
+}
+$('#chantText').oninput = chantInput;
+$('#keys').innerHTML = KEYS.map(k => `<button type="button">${k}</button>`).join('');
+$('#keys').onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const ta = $('#chantText');
+  ta.setRangeText(b.textContent, ta.selectionStart, ta.selectionEnd, 'end'); ta.focus(); chantInput();
+};
+renderChant();
