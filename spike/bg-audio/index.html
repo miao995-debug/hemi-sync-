@@ -47,6 +47,8 @@ ol.steps{margin:0;padding-left:20px}
       <small>一樣能即時調；系統把它當成一般媒體播放，可能比較不會被關。</small></label>
     <label class="opt"><input type="radio" name="m" value="file"> C｜預先產生的音檔循環
       <small>不能即時調，代表「匯出音檔」後備方案。</small></label>
+    <label class="opt"><input type="radio" name="m" value="hybrid"> D｜直接輸出＋焦點代理
+      <small>音質同 A；另掛一個幾乎無聲的播放器，來電時系統暫停它，聲音就跟著停。</small></label>
   </section>
 
   <section class="card">
@@ -68,7 +70,7 @@ ol.steps{margin:0;padding-left:20px}
       <li>按電源鍵關螢幕，記下時間。</li>
       <li>聽聲音有沒有斷；分別試 1、5、15 分鐘。</li>
       <li>開螢幕回到這頁，看下方紀錄的判定。</li>
-      <li>三種方式各試一次；再試「加到主畫面」後從圖示開啟。</li>
+      <li>各方式分別試；也試「加到主畫面」後從圖示開啟。</li>
     </ol>
   </section>
 
@@ -86,7 +88,7 @@ ol.steps{margin:0;padding-left:20px}
 const $ = s => document.querySelector(s);
 const LOGKEY = 'bgtest-log', AWAYKEY = 'bgtest-away';
 const FL = 200, FR = 204;
-const LABEL = { direct: 'A 直接輸出', stream: 'B 轉接播放器', file: 'C 音檔循環' };
+const LABEL = { direct: 'A 直接輸出', stream: 'B 轉接播放器', file: 'C 音檔循環', hybrid: 'D 直接輸出＋焦點代理' };
 
 /* ---------- 紀錄 ---------- */
 let log = [];
@@ -121,6 +123,7 @@ showVol();
 
 /* ---------- 播放 ---------- */
 let ctx = null, master = null, oscs = [], streamEl = null, fileEl = null, fileUrl = null;
+let keepEl = null, quietUrl = null;
 let method = null, playing = false;
 
 function makeTones() {
@@ -139,21 +142,28 @@ function makeTones() {
   oscs = [oL, oR];
 }
 
-// 30 秒立體聲 WAV：200×30、204×30 都是整數週期，循環無接縫
-function makeWav() {
-  const sr = 44100, sec = 30, n = sr * sec;
+// 立體聲 16-bit WAV；sample(i) 回傳 [左, 右]（整數）
+function wavBlob(sr, n, sample) {
   const buf = new ArrayBuffer(44 + n * 4), v = new DataView(buf);
   const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
   str(0, 'RIFF'); v.setUint32(4, 36 + n * 4, true); str(8, 'WAVE');
   str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 2, true);
   v.setUint32(24, sr, true); v.setUint32(28, sr * 4, true); v.setUint16(32, 4, true); v.setUint16(34, 16, true);
   str(36, 'data'); v.setUint32(40, n * 4, true);
-  const a = 0.8 * 32767, wL = 2 * Math.PI * FL / sr, wR = 2 * Math.PI * FR / sr;
   for (let i = 0, o = 44; i < n; i++, o += 4) {
-    v.setInt16(o, Math.round(a * Math.sin(wL * i)), true);
-    v.setInt16(o + 2, Math.round(a * Math.sin(wR * i)), true);
+    const [l, r] = sample(i);
+    v.setInt16(o, l, true); v.setInt16(o + 2, r, true);
   }
   return new Blob([buf], { type: 'audio/wav' });
+}
+// 30 秒：200×30、204×30 都是整數週期，循環無接縫
+function makeWav() {
+  const sr = 44100, a = 0.8 * 32767, wL = 2 * Math.PI * FL / sr, wR = 2 * Math.PI * FR / sr;
+  return wavBlob(sr, sr * 30, i => [Math.round(a * Math.sin(wL * i)), Math.round(a * Math.sin(wR * i))]);
+}
+// 焦點代理用：1 秒、振幅只有 ±1（約 -90 dB），聽不見但系統視為有聲音
+function makeQuietWav() {
+  return wavBlob(44100, 44100, i => (i & 1 ? [1, 1] : [-1, -1]));
 }
 
 function watchEl(el, name) {
@@ -168,8 +178,13 @@ function setMediaSession() {
     try { meta.artwork = [{ src: new URL('icon-512.png', location.href).href, sizes: '512x512', type: 'image/png' }]; } catch (e) {}
     try { navigator.mediaSession.metadata = new MediaMetadata(meta); }
     catch (e) { delete meta.artwork; navigator.mediaSession.metadata = new MediaMetadata(meta); }
-    navigator.mediaSession.setActionHandler('play', () => start());
-    navigator.mediaSession.setActionHandler('pause', () => stop());
+    if (method === 'hybrid') {
+      navigator.mediaSession.setActionHandler('play', () => { if (keepEl) keepEl.play(); });
+      navigator.mediaSession.setActionHandler('pause', () => { if (keepEl) keepEl.pause(); });
+    } else {
+      navigator.mediaSession.setActionHandler('play', () => start());
+      navigator.mediaSession.setActionHandler('pause', () => stop());
+    }
     navigator.mediaSession.setActionHandler('stop', () => stop());
     navigator.mediaSession.playbackState = 'playing';
   } catch (e) {
@@ -192,6 +207,25 @@ async function start() {
       makeTones();
       if (method === 'direct') {
         master.connect(ctx.destination);
+      } else if (method === 'hybrid') {
+        master.connect(ctx.destination);
+        if (!quietUrl) quietUrl = URL.createObjectURL(makeQuietWav());
+        keepEl = new Audio(quietUrl); keepEl.loop = true;
+        keepEl.addEventListener('pause', () => {
+          if (!playing || !ctx) return;
+          ctx.suspend();
+          if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+          addLog('焦點代理被暫停（來電或通知列）→ 聲音停止', 'bad');
+          $('#status').textContent = '已暫停（焦點代理）';
+        });
+        keepEl.addEventListener('play', () => {
+          if (!playing || !ctx) return;
+          ctx.resume();
+          if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+          addLog('焦點代理恢復 → 聲音恢復', 'ok');
+          $('#status').textContent = '播放中：' + LABEL[method];
+        });
+        await keepEl.play();
       } else {
         const dest = ctx.createMediaStreamDestination();
         master.connect(dest);
@@ -215,6 +249,8 @@ async function start() {
 }
 
 function teardown() {
+  playing = false;
+  if (keepEl) { keepEl.pause(); keepEl = null; }
   if (fileEl) { fileEl.pause(); fileEl = null; }
   if (streamEl) { streamEl.pause(); streamEl.srcObject = null; streamEl = null; }
   if (ctx) { oscs.forEach(o => { try { o.stop(); } catch (e) {} }); ctx.close(); ctx = null; master = null; oscs = []; }
