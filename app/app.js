@@ -1,8 +1,8 @@
 // 賽博雷音：介面
 // 版本號：每次發布都要改這裡、index.html、engine.js 的 ?v=，避免手機用到快取的舊檔
-import { F_MIN, F_MAX, formants, envelope, partialAmp, partialCount, bowlParts, tuneFormants, padPos, VOWELS } from './voice.js?v=0.3.0';
-import { parseIAST, KEYS } from './chant.js?v=0.3.0';
-const VERSION = '0.3.0';
+import { F_MIN, F_MAX, formants, envelope, partialAmp, partialCount, bowlParts, tuneFormants, padPos, VOWELS } from './voice.js?v=0.3.1';
+import { parseIAST, KEYS, hasHan, zhMap } from './chant.js?v=0.3.1';
+const VERSION = '0.3.1';
 
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
@@ -39,6 +39,13 @@ function voiceTract() {
 }
 /* ---------- 念誦 ---------- */
 let chant = parseIAST(S.chantText || ''), chantPos = 0, seekTo = 0, seekN = 0;
+// 漢字讀音表：只有輸入漢字時才載入（約 66 KB），載過一次就留在記憶體
+let zh = null, zhLoading = null, zhFailed = false;
+function loadZh() {
+  return zhLoading ||= fetch('./zh.json?v=' + VERSION).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(j => { zh = zhMap(j); zhFailed = false; return zh; })
+    .catch(e => { zhLoading = null; zhFailed = true; throw e; });
+}
 // 念誦此刻的口型目標（加上觸控板的偏移）
 function chantTarget() {
   const sg = chant.segs[chantPos] || [0.5, 0.5, 0, 0];
@@ -517,7 +524,12 @@ function renderChant() {
     part += esc(text.slice(cur, ln.e));
     html += `<div class="cl" data-line="${L}"><span class="no">${L + 1}</span>${part}</div>`;
   });
-  view.innerHTML = html || '<p class="muted small">還沒有文字。</p>';
+  const blank = !(S.chantText || '').trim(), waiting = chant.han && !zh;
+  const note = waiting ? (zhFailed ? '中文讀音載入失敗，請連上網路後再改一下文字。' : '正在載入中文讀音…')
+    : chant.unknown ? `有 ${chant.unknown} 個字查不到讀音，已略過；可以在方括號裡寫拼音指定，例如 [na mo]。` : '';
+  view.innerHTML = (html || (blank ? '<p class="muted small">還沒有文字。</p>'
+    : waiting ? '' : '<p class="muted small">這些字認不得。目前認得：漢字（國語）、梵文轉寫（IAST）、方括號裡的拼音。</p>'))
+    + (note ? `<p class="muted small">${note}</p>` : '');
   lastSpan = -1; lastLine = -1;
   setChantPos(Math.min(chantPos, Math.max(0, chant.segs.length - 1)));
 }
@@ -547,12 +559,14 @@ $('#loop').onchange = e => { S.loop = e.target.checked; changed(); };
 let chantTimer = 0;
 function chantInput() {
   clearTimeout(chantTimer);
-  chantTimer = setTimeout(() => {
-    S.chantText = $('#chantText').value;
-    chant = parseIAST(S.chantText); chantPos = 0;
-    if (node) node.port.postMessage({ chantSegs: chant.segs, chantId: chant.id });
-    renderChant(); changed();
-  }, 500);
+  chantTimer = setTimeout(() => { S.chantText = $('#chantText').value; applyChantText(); }, 500);
+}
+// 重新解析文字；有漢字而讀音表還沒載入時，先載入再解析一次
+function applyChantText() {
+  chant = parseIAST(S.chantText || '', zh); chantPos = 0; seekTo = 0; seekN++;
+  if (node) node.port.postMessage({ chantSegs: chant.segs, chantId: chant.id, seek: 0, seekN });
+  renderChant(); changed();
+  if (!zh && hasHan(S.chantText)) loadZh().then(applyChantText, () => renderChant());
 }
 $('#chantText').oninput = chantInput;
 $('#keys').innerHTML = KEYS.map(k => `<button type="button">${k}</button>`).join('');
@@ -562,3 +576,4 @@ $('#keys').onclick = e => {
   ta.setRangeText(b.textContent, ta.selectionStart, ta.selectionEnd, 'end'); ta.focus(); chantInput();
 };
 renderChant();
+if (hasHan(S.chantText)) loadZh().then(applyChantText, () => renderChant());
