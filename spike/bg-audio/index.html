@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#16161a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<title>背景播放測試</title>
+<style>
+:root{--bg:#f6f5f2;--panel:#fff;--ink:#1d1d1f;--mute:#6b6b70;--line:#e2e0da;--acc:#3b5bdb;--ok:#2b8a3e;--bad:#c92a2a}
+@media (prefers-color-scheme:dark){:root{--bg:#16161a;--panel:#1f1f24;--ink:#ececf0;--mute:#9a9aa3;--line:#30303a;--acc:#8ea2ff;--ok:#69db7c;--bad:#ff8787}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 system-ui,"Microsoft JhengHei","Noto Sans TC",sans-serif}
+main{max-width:640px;margin:0 auto;padding:20px 16px 48px}
+h1{font-size:22px;margin:0}
+h2{font-size:16px;margin:0 0 8px}
+.sub{color:var(--mute);margin:2px 0 16px;font-size:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:12px}
+label.opt{display:block;padding:8px 0;border-top:1px solid var(--line)}
+label.opt:first-of-type{border-top:0}
+label.opt small{display:block;color:var(--mute);margin-left:26px;font-size:13px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+button{font:inherit;padding:12px 22px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+button:disabled{opacity:.45}
+input[type=range]{width:100%}
+#status{font-weight:600;margin:12px 0}
+ol.steps{margin:0;padding-left:20px}
+#log{list-style:none;margin:8px 0 0;padding:0;font-size:14px}
+#log li{padding:5px 0;border-top:1px solid var(--line)}
+#log time{color:var(--mute);font-variant-numeric:tabular-nums;margin-right:6px}
+#log .ok{color:var(--ok)} #log .bad{color:var(--bad)}
+.small{font-size:13px;color:var(--mute)}
+</style>
+</head>
+<body>
+<main>
+  <h1>背景播放測試</h1>
+  <p class="sub">賽博雷音 · 測三星關螢幕後，網頁的聲音能不能繼續播。聲音是左 200 Hz／右 204 Hz。</p>
+
+  <section class="card">
+    <h2>1. 選播放方式</h2>
+    <label class="opt"><input type="radio" name="m" value="direct" checked> A｜Web Audio 直接輸出
+      <small>正式版最想用的方式，能即時調參數。</small></label>
+    <label class="opt"><input type="radio" name="m" value="stream"> B｜Web Audio 轉接到播放器元素
+      <small>一樣能即時調；系統把它當成一般媒體播放，可能比較不會被關。</small></label>
+    <label class="opt"><input type="radio" name="m" value="file"> C｜預先產生的音檔循環
+      <small>不能即時調，代表「匯出音檔」後備方案。</small></label>
+  </section>
+
+  <section class="card">
+    <h2>2. 音量 <output id="volOut"></output></h2>
+    <input type="range" id="vol" min="0" max="40" value="15">
+    <p class="small">先把手機音量調低再按播放。</p>
+  </section>
+
+  <div class="row">
+    <button id="play" class="primary">播放</button>
+    <button id="stop" disabled>停止</button>
+  </div>
+  <p id="status">尚未播放</p>
+
+  <section class="card">
+    <h2>3. 測試步驟</h2>
+    <ol class="steps">
+      <li>戴上耳機、按播放，確認聽得到。</li>
+      <li>按電源鍵關螢幕，記下時間。</li>
+      <li>聽聲音有沒有斷；分別試 1、5、15 分鐘。</li>
+      <li>開螢幕回到這頁，看下方紀錄的判定。</li>
+      <li>三種方式各試一次；再試「加到主畫面」後從圖示開啟。</li>
+    </ol>
+  </section>
+
+  <section class="card">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">紀錄</h2>
+      <div class="row"><button id="copy">複製</button><button id="clear">清除</button></div>
+    </div>
+    <ul id="log"></ul>
+  </section>
+</main>
+
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const LOGKEY = 'bgtest-log', AWAYKEY = 'bgtest-away';
+const FL = 200, FR = 204;
+const LABEL = { direct: 'A 直接輸出', stream: 'B 轉接播放器', file: 'C 音檔循環' };
+
+/* ---------- 紀錄 ---------- */
+let log = [];
+try { log = JSON.parse(localStorage.getItem(LOGKEY) || '[]'); } catch (e) {}
+const esc = s => String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+function addLog(msg, cls) {
+  log.push({ t: Date.now(), msg, cls: cls || '' });
+  if (log.length > 400) log = log.slice(-400);
+  try { localStorage.setItem(LOGKEY, JSON.stringify(log)); } catch (e) {}
+  renderLog();
+}
+function renderLog() {
+  $('#log').innerHTML = log.slice().reverse().map(e =>
+    `<li class="${e.cls}"><time>${new Date(e.t).toLocaleTimeString('zh-TW', { hour12: false })}</time>${esc(e.msg)}</li>`).join('');
+}
+$('#clear').onclick = () => { log = []; try { localStorage.removeItem(LOGKEY); } catch (e) {} renderLog(); };
+$('#copy').onclick = async () => {
+  const text = log.map(e => new Date(e.t).toLocaleString('zh-TW', { hour12: false }) + '  ' + e.msg).join('\n');
+  try { await navigator.clipboard.writeText(text); $('#status').textContent = '紀錄已複製'; }
+  catch (e) { $('#status').textContent = '無法複製，請截圖'; }
+};
+
+/* ---------- 音量 ---------- */
+const vol = () => $('#vol').value / 100;
+function showVol() { $('#volOut').textContent = $('#vol').value + '%'; }
+$('#vol').oninput = () => {
+  showVol();
+  if (master) master.gain.setTargetAtTime(vol(), ctx.currentTime, 0.05);
+  if (fileEl) fileEl.volume = Math.min(1, vol());
+};
+showVol();
+
+/* ---------- 播放 ---------- */
+let ctx = null, master = null, oscs = [], streamEl = null, fileEl = null, fileUrl = null;
+let method = null, playing = false;
+
+function makeTones() {
+  ctx = new AudioContext();
+  ctx.onstatechange = e => {
+    const s = e.target.state;
+    if (s !== 'closed') addLog('音訊引擎狀態：' + s, s === 'running' ? '' : 'bad');
+  };
+  const merger = ctx.createChannelMerger(2);
+  const oL = ctx.createOscillator(), oR = ctx.createOscillator();
+  oL.frequency.value = FL; oR.frequency.value = FR;
+  oL.connect(merger, 0, 0); oR.connect(merger, 0, 1);
+  master = ctx.createGain(); master.gain.value = 0;
+  merger.connect(master);
+  oL.start(); oR.start();
+  oscs = [oL, oR];
+}
+
+// 30 秒立體聲 WAV：200×30、204×30 都是整數週期，循環無接縫
+function makeWav() {
+  const sr = 44100, sec = 30, n = sr * sec;
+  const buf = new ArrayBuffer(44 + n * 4), v = new DataView(buf);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + n * 4, true); str(8, 'WAVE');
+  str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 2, true);
+  v.setUint32(24, sr, true); v.setUint32(28, sr * 4, true); v.setUint16(32, 4, true); v.setUint16(34, 16, true);
+  str(36, 'data'); v.setUint32(40, n * 4, true);
+  const a = 0.8 * 32767, wL = 2 * Math.PI * FL / sr, wR = 2 * Math.PI * FR / sr;
+  for (let i = 0, o = 44; i < n; i++, o += 4) {
+    v.setInt16(o, Math.round(a * Math.sin(wL * i)), true);
+    v.setInt16(o + 2, Math.round(a * Math.sin(wR * i)), true);
+  }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+
+function watchEl(el, name) {
+  ['pause', 'stalled', 'suspend', 'waiting', 'error'].forEach(ev =>
+    el.addEventListener(ev, () => { if (playing) addLog(`${name} 事件：${ev}`, ev === 'suspend' ? '' : 'bad'); }));
+}
+
+function setMediaSession() {
+  if (!('mediaSession' in navigator)) { addLog('此瀏覽器不支援 Media Session'); return; }
+  try {
+    const meta = { title: '背景播放測試', artist: '賽博雷音', album: LABEL[method] };
+    try { meta.artwork = [{ src: new URL('icon-512.png', location.href).href, sizes: '512x512', type: 'image/png' }]; } catch (e) {}
+    try { navigator.mediaSession.metadata = new MediaMetadata(meta); }
+    catch (e) { delete meta.artwork; navigator.mediaSession.metadata = new MediaMetadata(meta); }
+    navigator.mediaSession.setActionHandler('play', () => start());
+    navigator.mediaSession.setActionHandler('pause', () => stop());
+    navigator.mediaSession.setActionHandler('stop', () => stop());
+    navigator.mediaSession.playbackState = 'playing';
+  } catch (e) {
+    addLog('鎖定畫面控制設定失敗（不影響播放）：' + e.message);
+  }
+}
+
+async function start() {
+  if (playing) return;
+  method = document.querySelector('input[name=m]:checked').value;
+  try {
+    if (method === 'file') {
+      if (!fileUrl) fileUrl = URL.createObjectURL(makeWav());
+      fileEl = new Audio(fileUrl); fileEl.loop = true; fileEl.volume = Math.min(1, vol());
+      fileLoops = 0; lastFileT = 0;
+      fileEl.addEventListener('timeupdate', () => { if (method === 'file') audioClock(); });
+      watchEl(fileEl, '音檔播放器');
+      await fileEl.play();
+    } else {
+      makeTones();
+      if (method === 'direct') {
+        master.connect(ctx.destination);
+      } else {
+        const dest = ctx.createMediaStreamDestination();
+        master.connect(dest);
+        streamEl = new Audio(); streamEl.srcObject = dest.stream;
+        watchEl(streamEl, '轉接播放器');
+        await streamEl.play();
+      }
+      await ctx.resume();
+      master.gain.setTargetAtTime(vol(), ctx.currentTime, 0.1);
+    }
+    playing = true;
+    setMediaSession();
+    addLog('開始播放：' + LABEL[method], 'ok');
+    $('#status').textContent = '播放中：' + LABEL[method];
+    $('#play').disabled = true; $('#stop').disabled = false;
+    document.querySelectorAll('input[name=m]').forEach(r => r.disabled = true);
+  } catch (e) {
+    addLog('播放失敗：' + e.message, 'bad');
+    teardown();
+  }
+}
+
+function teardown() {
+  if (fileEl) { fileEl.pause(); fileEl = null; }
+  if (streamEl) { streamEl.pause(); streamEl.srcObject = null; streamEl = null; }
+  if (ctx) { oscs.forEach(o => { try { o.stop(); } catch (e) {} }); ctx.close(); ctx = null; master = null; oscs = []; }
+  playing = false;
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
+  $('#play').disabled = false; $('#stop').disabled = true;
+  document.querySelectorAll('input[name=m]').forEach(r => r.disabled = false);
+}
+
+function stop() {
+  if (!playing) return;
+  addLog('停止播放');
+  $('#status').textContent = '已停止';
+  teardown();
+  try { localStorage.removeItem(AWAYKEY); } catch (e) {}
+}
+$('#play').onclick = start;
+$('#stop').onclick = stop;
+
+/* ---------- 背景監測 ---------- */
+// 音訊時鐘：A/B 用音訊引擎的時間；C 用播放器的累計時間（含循環次數）
+let fileLoops = 0, lastFileT = 0;
+function audioClock() {
+  if (method === 'file' && fileEl) {
+    const t = fileEl.currentTime;
+    if (t + 1 < lastFileT) fileLoops++;
+    lastFileT = t;
+    return fileLoops * 30 + t;
+  }
+  return ctx ? ctx.currentTime : null;
+}
+
+let away = null, lastTick = Date.now(), maxGap = 0;
+setInterval(() => {
+  const now = Date.now();
+  if (away) maxGap = Math.max(maxGap, now - lastTick);
+  lastTick = now;
+  if (playing) audioClock();
+  if (away) { try { localStorage.setItem(AWAYKEY, JSON.stringify({ ...away, lastAlive: now })); } catch (e) {} }
+}, 1000);
+
+document.addEventListener('visibilitychange', () => {
+  if (!playing) return;
+  if (document.hidden) {
+    away = { at: Date.now(), clock: audioClock(), method };
+    maxGap = 0; lastTick = Date.now();
+    try { localStorage.setItem(AWAYKEY, JSON.stringify({ ...away, lastAlive: away.at })); } catch (e) {}
+    addLog('離開畫面（關螢幕或切到別的 App）');
+  } else if (away) {
+    const wall = (Date.now() - away.at) / 1000;
+    const c = audioClock();
+    const ran = c == null || away.clock == null ? null : c - away.clock;
+    const gap = Math.round(maxGap / 1000);
+    let verdict, cls;
+    if (ran == null) { verdict = '無法判定，請以耳朵為準'; cls = ''; }
+    else if (ran >= wall - 2) { verdict = '聲音全程在播'; cls = 'ok'; }
+    else { verdict = `聲音大約在離開 ${Math.round(ran)} 秒後停了`; cls = 'bad'; }
+    addLog(`回到畫面：離開 ${Math.round(wall)} 秒，音訊前進 ${ran == null ? '?' : Math.round(ran)} 秒 → ${verdict}；程式最長停頓 ${gap} 秒`, cls);
+    away = null;
+    try { localStorage.removeItem(AWAYKEY); } catch (e) {}
+  }
+});
+
+// 頁面被系統關掉後重新載入：從上次留下的標記推算
+(function checkKilled() {
+  let a = null;
+  try { a = JSON.parse(localStorage.getItem(AWAYKEY) || 'null'); } catch (e) {}
+  if (!a) return;
+  const alive = Math.round((a.lastAlive - a.at) / 1000);
+  addLog(`上次（${LABEL[a.method] || '?'}）離開畫面後，頁面被系統關掉並重新載入；離開後至少還活了 ${alive} 秒`, 'bad');
+  try { localStorage.removeItem(AWAYKEY); } catch (e) {}
+})();
+
+renderLog();
+</script>
+</body>
+</html>
