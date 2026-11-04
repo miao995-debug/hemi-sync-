@@ -1,6 +1,6 @@
 // 賽博雷音：合成引擎（AudioWorklet）
 // 加法合成。右耳每個成分都比左耳剛好高 delta Hz（整組平移），所以不論音色如何，每個成分都貢獻同一個差頻。
-import { partialAmp, partialCount, MAX_PARTIALS } from './voice.js?v=0.1.1';
+import { partialAmp, partialCount, MAX_PARTIALS } from './voice.js?v=0.1.2';
 
 const TAU = Math.PI * 2;
 

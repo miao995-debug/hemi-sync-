@@ -1,7 +1,7 @@
 // 賽博雷音：介面
 // 版本號：每次發布都要改這裡、index.html、engine.js 的 ?v=，避免手機用到快取的舊檔
-import { F_MIN, F_MAX, formants, envelope, partialAmp, partialCount, VOWELS } from './voice.js?v=0.1.1';
-const VERSION = '0.1.1';
+import { F_MIN, F_MAX, formants, envelope, partialAmp, partialCount, VOWELS } from './voice.js?v=0.1.2';
+const VERSION = '0.1.2';
 
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
@@ -51,6 +51,8 @@ async function ensureEngine() {
 }
 
 async function start() {
+  // iPhone：預設的網頁音訊會被側邊靜音鍵靜音；宣告成「播放媒體」就不受靜音鍵影響（Safari 16.4+）
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
   try {
     await ensureEngine();
     await ctx.resume();
