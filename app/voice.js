@@ -1,6 +1,6 @@
 // 賽博雷音：口型與聲道響應。主執行緒（畫圖）與音訊執行緒（合成）共用。
 
-export const F_MIN = 80, F_MAX = 1000;          // 共振頻率（單音音高／口型基頻）
+export const F_MIN = 40, F_MAX = 1000;          // 共振頻率（單音音高／口型基頻）
 export const F1_MIN = 250, F1_MAX = 900;        // 第一共振峰：閉口 → 開口
 export const F2_FRONT = 2500, F2_BACK = 700;    // 第二共振峰：舌前 → 舌後
 
@@ -49,7 +49,7 @@ export function partialAmp(k, f0, F, nasal) {
   return envelope(k * f0, F, nasal) / k;
 }
 
-export const MAX_PARTIALS = 64;
+export const MAX_PARTIALS = 128;   // 基頻 40 Hz 時仍能涵蓋到 5000 Hz
 export function partialCount(f0, sampleRate) {
   return Math.max(1, Math.min(MAX_PARTIALS, Math.floor(Math.min(5000, sampleRate * 0.45) / f0)));
 }
