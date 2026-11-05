@@ -1,8 +1,8 @@
 // 賽博雷音：介面
 // 版本號：每次發布都要改這裡、index.html、engine.js 的 ?v=，避免手機用到快取的舊檔
-import { F_MIN, F_MAX, formants, envelope, partialAmp, partialCount, bowlParts, tuneFormants, padPos, VOWELS } from './voice.js?v=0.3.1';
-import { parseIAST, KEYS, hasHan, zhMap } from './chant.js?v=0.3.1';
-const VERSION = '0.3.1';
+import { F_MIN, F_MAX, formants, envelope, partialAmp, partialCount, bowlParts, tuneFormants, padPos, VOWELS } from './voice.js?v=0.3.2';
+import { parseIAST, KEYS, hasHan, zhMap } from './chant.js?v=0.3.2';
+const VERSION = '0.3.2';
 
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
@@ -13,7 +13,7 @@ const PARTS = ['整體', '頭頂', '前額', '眉心', '鼻腔', '上顎', '喉�
 const a0 = VOWELS.find(v => v.v === 'a');
 const DEF = {
   mode: 'tone', f0: 200, delta: 4, x: a0.x, y: a0.y, nasal: 0, round: 0, tune: 0,
-  chantText: '', rate: 3, loop: true, ox: 0, oy: 0,
+  chantText: '', rate: 3, legato: 0, loop: true, ox: 0, oy: 0,
   bright: 40, wobble: 40, strike: 0, knock: 50, mallet: 'soft',
   bal: 0, mix: 0, vol: 35, limit: 30, headset: 'OpenSwim Pro', fine: false,
 };
@@ -60,7 +60,7 @@ function tractNow() {
 function engineParams() {
   const b = S.bal / 100;
   return {
-    round: S.round / 100, tune: S.tune / 100, ox: S.ox, oy: S.oy, rate: S.rate, loop: S.loop,
+    round: S.round / 100, tune: S.tune / 100, ox: S.ox, oy: S.oy, rate: S.rate, legato: S.legato / 100, loop: S.loop,
     chantId: chant.id, seek: seekTo, seekN,
     mode: S.mode, f0: S.f0, delta: S.delta, F: voiceTract().F, nasal: S.nasal / 100, sharp: S.tune / 100,
     bright: S.bright / 100, wobble: S.wobble / 100, strike: S.strike,
@@ -185,17 +185,25 @@ $('#sweep').onclick = () => {
 };
 
 /* ---------- 一般橫條 ---------- */
-function bindRange(id, key, fmt) {
+// map：滑桿位置與數值不是一比一時（例如對數刻度）用 { to: 值→位置, from: 位置→值 }
+function bindRange(id, key, fmt, map) {
   const el = $('#' + id), out = $('#' + id + 'Out');
   const show = () => { if (out) out.textContent = fmt(S[key]); };
-  el.oninput = () => { S[key] = parseFloat(el.value); show(); changed(); };
-  return () => { el.value = S[key]; show(); };
+  el.oninput = () => { S[key] = map ? map.from(parseFloat(el.value)) : parseFloat(el.value); show(); changed(); };
+  return () => { el.value = map ? map.to(S[key]) : S[key]; show(); };
 }
+// 念速：0.05–6 音節／秒，滑桿用對數刻度，慢的那端才調得細
+const RATE_MIN = 0.05, RATE_MAX = 6, RATE_LOG = Math.log(RATE_MAX / RATE_MIN);
+const rateMap = {
+  to: r => Math.round(1000 * Math.log(r / RATE_MIN) / RATE_LOG),
+  from: p => +(RATE_MIN * Math.exp(p / 1000 * RATE_LOG)).toPrecision(2),
+};
 const syncers = [
   bindRange('nasal', 'nasal', v => v + '%'),
   bindRange('round', 'round', v => v + '%'),
   bindRange('tune', 'tune', v => v + '%'),
-  bindRange('rate', 'rate', v => `每秒約 ${v.toFixed(1)} 音節`),
+  bindRange('rate', 'rate', v => v >= 1 ? `每秒約 ${v.toFixed(1)} 音節` : `一音節約 ${(1 / v).toFixed(1)} 秒`, rateMap),
+  bindRange('legato', 'legato', v => v + '%'),
   bindRange('delta', 'delta', v => v.toFixed(1) + ' Hz' + (v >= 4 && v < 8 ? '（θ）' : v === 0 ? '（無節拍）' : '')),
   bindRange('bal', 'bal', v => v === 0 ? '置中' : v < 0 ? `偏左 ${-v}%` : `偏右 ${v}%`),
   bindRange('mix', 'mix', v => v + '%'),
@@ -447,8 +455,8 @@ function openRec() {
 }
 function snapshot() {
   if (S.mode === 'chant') {
-    const { mode, f0, delta, nasal, round, tune, ox, oy, rate, bal, mix } = S, sg = chant.segs[chantPos];
-    return { mode, f0, delta, nasal, round, tune, ox, oy, rate, bal, mix, chant: { id: chant.id, line: sg ? sg[5] : 0 } };   // 不存經文
+    const { mode, f0, delta, nasal, round, tune, ox, oy, rate, legato, bal, mix } = S, sg = chant.segs[chantPos];
+    return { mode, f0, delta, nasal, round, tune, ox, oy, rate, legato, bal, mix, chant: { id: chant.id, line: sg ? sg[5] : 0 } };   // 不存經文
   }
   const { mode, f0, delta, x, y, nasal, round, tune, bright, wobble, strike, knock, mallet, bal, mix } = S;
   return { mode, f0, delta, x, y, nasal, round, tune, bright, wobble, strike, knock, mallet, bal, mix };
@@ -483,7 +491,7 @@ $('#points').onclick = e => {
   const id = +b.closest('li').dataset.id, p = points.find(x => x.id === id); if (!p) return;
   if (b.dataset.act === 'apply' && p.s.chant) {
     const { chant: c, ...rest } = p.s;
-    Object.assign(S, { ox: 0, oy: 0, rate: DEF.rate }, rest); syncAll();
+    Object.assign(S, { ox: 0, oy: 0, rate: DEF.rate, legato: DEF.legato }, rest); syncAll();
     const ln = chant.lines[c.line];
     if (c.id === chant.id && ln) seekChant(ln.seg);
     window.scrollTo({ top: 0, behavior: 'smooth' });

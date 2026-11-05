@@ -1,6 +1,6 @@
 // 賽博雷音：合成引擎（AudioWorklet）
 // 加法合成。右耳每個成分都比左耳剛好高 delta Hz（整組平移），所以不論音色如何，每個成分都貢獻同一個差頻。
-import { partialAmp, partialCount, bowlParts, formants, tuneFormants, MAX_PARTIALS } from './voice.js?v=0.3.1';
+import { partialAmp, partialCount, bowlParts, formants, tuneFormants, MAX_PARTIALS } from './voice.js?v=0.3.2';
 
 const TAU = Math.PI * 2;
 
@@ -17,7 +17,7 @@ class Engine extends AudioWorkletProcessor {
     this.p = {
       mode: 'tone', f0: 200, delta: 4, F: [730, 1100, 2700], nasal: 0,
       bright: 0.4, wobble: 0.4, strike: 0, knock: 0.5, mallet: 'soft',
-      chantSegs: null, chantId: '', rate: 3, loop: true, ox: 0, oy: 0, round: 0, tune: 0, seek: 0, seekN: 0,
+      chantSegs: null, chantId: '', rate: 3, legato: 0, loop: true, ox: 0, oy: 0, round: 0, tune: 0, seek: 0, seekN: 0,
       gL: 1, gR: 1, mix: 0, gain: 0, fade: 0.05,
     };
     Object.assign(this.p, (options && options.processorOptions) || {});
@@ -82,7 +82,7 @@ class Engine extends AudioWorkletProcessor {
     if (p.seekN !== this.seekN) { this.seekN = p.seekN; this.ci = Math.min(segs.length - 1, Math.max(0, p.seek | 0)); this.ct = 0; this.done = false; this.report(); }
     if (this.ci >= segs.length) this.ci = 0;
     if (!this.done) {
-      this.ct += dt * Math.max(0.1, p.rate);
+      this.ct += dt * Math.max(0.05, p.rate);
       while (this.ct >= segs[this.ci][4]) {
         this.ct -= segs[this.ci][4]; this.ci++;
         if (this.ci >= segs.length) {
@@ -93,9 +93,12 @@ class Engine extends AudioWorkletProcessor {
       }
     }
     const cur = segs[this.ci], prev = segs[this.ci > 0 ? this.ci - 1 : segs.length - 1];
-    const tr = Math.min(0.25, cur[4] * 0.5), k = tr > 0 ? Math.min(1, this.ct / tr) : 1, s = k * k * (3 - 2 * k);
-    const L = (a, b) => a + (b - a) * s;
-    return { x: L(prev[0], cur[0]), y: L(prev[1], cur[1]), nasal: L(prev[2], cur[2]), gain: this.done ? 0 : L(prev[3], cur[3]) };
+    // 連音：過渡時間從「最多 0.25 單位」拉長到整段，子音的音量凹陷變淺（停頓仍是 0）
+    const lg = Math.min(1, Math.max(0, p.legato || 0));
+    const tr0 = Math.min(0.25, cur[4] * 0.5), tr = tr0 + (cur[4] - tr0) * lg;
+    const k = tr > 0 ? Math.min(1, this.ct / tr) : 1, s = k * k * (3 - 2 * k);
+    const L = (a, b) => a + (b - a) * s, G = g => g > 0 ? g + (1 - g) * lg : 0;
+    return { x: L(prev[0], cur[0]), y: L(prev[1], cur[1]), nasal: L(prev[2], cur[2]), gain: this.done ? 0 : L(G(prev[3]), G(cur[3])) };
   }
   report() { this.port.postMessage({ pos: this.ci }); }
 

@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#16161a">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=0.3.1">
+<link rel="stylesheet" href="style.css?v=0.3.2">
 <title>賽博雷音</title>
 </head>
 <body>
@@ -82,8 +82,15 @@
     <div id="chantView" class="chantview" aria-label="念到的位置"></div>
     <label class="field">
       <span class="lbl">念速 <output id="rateOut"></output></span>
-      <input type="range" id="rate" min="0.5" max="6" step="0.1">
+      <input type="range" id="rate" min="0" max="1000" step="1">
+      <span class="ends small muted"><span>慢（一音約 20 秒）</span><span>快</span></span>
     </label>
+    <label class="field">
+      <span class="lbl">連音 <output id="legatoOut"></output></span>
+      <input type="range" id="legato" min="0" max="100" step="1">
+      <span class="ends small muted"><span>逐字</span><span>連綿</span></span>
+    </label>
+    <p class="muted small">往「連綿」拉，字與字之間不再斷開：子音造成的音量凹陷變淺，口型不停地滑向下一個音。0% 和原本一樣。</p>
     <div class="row gap wrap">
       <label class="inline"><input type="checkbox" id="loop"> 循環</label>
       <button id="chantRestart">回到開頭</button>
@@ -210,7 +217,7 @@
   <button id="recBtn">記錄共振點</button>
 </nav>
 
-<script type="module" src="app.js?v=0.3.1"></script>
-<p class="ver muted small">v0.3.1</p>
+<script type="module" src="app.js?v=0.3.2"></script>
+<p class="ver muted small">v0.3.2</p>
 </body>
 </html>
