@@ -110,3 +110,13 @@ summary { cursor: pointer; color: var(--mute); font-size: 14px; }
 .chantview .cl.cur { background: color-mix(in srgb, var(--acc) 12%, transparent); }
 .chantview .no { display: inline-block; min-width: 1.8em; color: var(--mute); font-size: 12px; }
 .chantview .on { color: var(--acc); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+
+/* 多缽、缽組 */
+.bowlrow { border-top: 1px solid var(--line); padding: 8px 0 2px; }
+.bowlrow .head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.bowlrow .head .name { font-size: 14px; min-width: 3.5em; }
+.bowlrow .head select { flex: 1; min-width: 8em; }
+.bowlrow .head input[type=number] { width: 6.5em; }
+.bowlrow .hz { color: var(--mute); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.chips button { padding: 8px 14px; border-radius: 999px; }

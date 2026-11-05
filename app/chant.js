@@ -2,7 +2,7 @@
 // 梵文轉寫（IAST）或漢字（國語讀音）→ 一串「段」：每段是口型目標＋長短＋音量，引擎照時間推進。
 // 這裡只有發音規則（語言學知識），不含任何經文；經文由使用者自己輸入，只存在本機。
 // 漢字讀音表（zh.json，取自 Unicode Unihan）由介面在需要時才載入，再傳進來。
-import { padPos } from './voice.js?v=0.3.2';
+import { padPos } from './voice.js?v=0.4.0';
 
 // 時間單位：1 單位 = 1 / 念速 秒（念速＝每秒約幾個音節）
 const D = { short: 0.7, long: 1.5, stop: 0.3, asp: 0.15, nasal: 0.35, semi: 0.3, sib: 0.35, h: 0.3, anus: 0.8, visarga: 0.4 };

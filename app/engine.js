@@ -1,6 +1,6 @@
 // 賽博雷音：合成引擎（AudioWorklet）
 // 加法合成。右耳每個成分都比左耳剛好高 delta Hz（整組平移），所以不論音色如何，每個成分都貢獻同一個差頻。
-import { partialAmp, partialCount, bowlParts, formants, tuneFormants, MAX_PARTIALS } from './voice.js?v=0.3.2';
+import { partialAmp, partialCount, bowlSet, bowlRatios, MAX_BOWLS, BOWL_N, formants, tuneFormants, MAX_PARTIALS } from './voice.js?v=0.4.0';
 
 const TAU = Math.PI * 2;
 
@@ -16,7 +16,7 @@ class Engine extends AudioWorkletProcessor {
     // 目標參數（由主執行緒更新）
     this.p = {
       mode: 'tone', f0: 200, delta: 4, F: [730, 1100, 2700], nasal: 0,
-      bright: 0.4, wobble: 0.4, strike: 0, knock: 0.5, mallet: 'soft',
+      bright: 0.4, wobble: 0.4, strike: 0, knock: 0.5, mallet: 'soft', bowls: [{ r: 1, v: 1 }], order: 'roll', align: false,
       chantSegs: null, chantId: '', rate: 3, legato: 0, loop: true, ox: 0, oy: 0, round: 0, tune: 0, seek: 0, seekN: 0,
       gL: 1, gR: 1, mix: 0, gain: 0, fade: 0.05,
     };
@@ -32,6 +32,7 @@ class Engine extends AudioWorkletProcessor {
     this.env = new Float64Array(MAX_PARTIALS).fill(1);
     this.sinceStrike = 0; this.lastStrike = this.p.strike;
     this.attack = 0;                              // 敲擊後的快速起音剩餘秒數
+    this.br = new Float64Array(MAX_BOWLS); this.nb = 0;   // 多缽：各缽實際的頻率比（平滑中）、目前的缽數
     this.kn = 0; this.kd = 0; this.bq = null;      // 敲擊聲：噪音包絡、每樣本衰減、帶通濾波器
     this.x1 = this.x2 = this.y1 = this.y2 = 0;
     // 每個成分的旋轉振盪器狀態（cos, sin），左右初始相位相同
@@ -45,6 +46,7 @@ class Engine extends AudioWorkletProcessor {
     // 念誦：目前在第幾段、段內走了幾個時間單位（1 單位 = 1 / 念速 秒）
     this.ci = 0; this.ct = 0; this.cg = 0; this.chantId = this.p.chantId; this.seekN = this.p.seekN; this.done = false;
     this.port.onmessage = e => Object.assign(this.p, e.data);
+    if (this.cur === 'bowl' && this.p.strike > 0) this.strike(this.p);   // 一開始就是頌缽：從第一輪敲起
   }
 
   osc(buf, re, im, k, w, a, da, n) {
@@ -63,8 +65,17 @@ class Engine extends AudioWorkletProcessor {
 
   // 槌敲在金屬上的短促聲：白噪音乘上快速衰減，再過一個帶通濾波器。
   // 皮槌：低、悶、稍長；木槌：高、脆、很短。左右耳相同（它是一個「點」，不是節拍的一部分）
+  // 一輪敲擊從頭開始：同時敲＝全部一起；輪流敲＝先敲主缽，其餘還沒輪到的先不響
   strike(p) {
-    this.sinceStrike = 0; this.env.fill(1); this.attack = 0.03;
+    this.sinceStrike = 0;
+    if (p.order === 'together') this.env.fill(1);
+    else { this.env.fill(0); this.env.fill(1, 0, BOWL_N); }
+    this.knock(p);
+  }
+  // 敲第 b 個缽：它的成分重新從 1 開始衰減
+  strikeBowl(p, b) { this.env.fill(1, b * BOWL_N, (b + 1) * BOWL_N); this.knock(p); }
+  knock(p) {
+    this.attack = 0.03;
     if (!(p.knock > 0)) return;
     const wood = p.mallet === 'wood', sr = sampleRate;
     const fc = wood ? 2800 : 700, Q = wood ? 1.6 : 1.0, tau = wood ? 0.008 : 0.022;
@@ -131,7 +142,12 @@ class Engine extends AudioWorkletProcessor {
       }
     } else if (mode === 'tone') { tgt[0] = 1; fq[0] = this.f0; }
     else if (mode === 'bowl') {
-      bowl = bowlParts(this.f0, p.bright, p.wobble);
+      const bs = (p.bowls && p.bowls.length ? p.bowls : [{ r: 1, v: 1 }]).slice(0, MAX_BOWLS), nb = bs.length;
+      const rs = bowlRatios(this.f0, p.bright, bs, this.delta, p.align);
+      for (let b = 0; b < nb; b++) this.br[b] = b < this.nb ? this.br[b] + (rs[b] - this.br[b]) * k40 : rs[b];   // 改音程時滑過去，新加的缽直接到位
+      if (nb > this.nb && p.strike > 0 && this.nb > 0) this.env.fill(0, this.nb * BOWL_N, nb * BOWL_N);           // 新加的缽等輪到它才響
+      this.nb = nb;
+      bowl = bowlSet(this.f0, p.bright, p.wobble, Array.from(this.br.subarray(0, nb)), bs.map(b => b.v));
       for (let j = 0; j < bowl.length; j++) { tgt[j] = bowl[j].a; fq[j] = bowl[j].f; }
     } else {
       const K = partialCount(this.f0, sr);
@@ -149,9 +165,15 @@ class Engine extends AudioWorkletProcessor {
         if (p.strike > 0) this.strike(p);
       }
       if (p.strike > 0) {
-        this.sinceStrike += dt;
-        if (this.sinceStrike >= p.strike) this.strike(p);
-        else for (let j = 0; j < bowl.length; j++) env[j] *= Math.exp(-dt / bowl[j].tau);
+        for (let j = 0; j < bowl.length; j++) env[j] *= Math.exp(-dt / bowl[j].tau);
+        // 輪流敲：第 b 個缽在每輪的 b／缽數 處敲
+        const t0 = this.sinceStrike, t1 = t0 + dt, nb = this.nb;
+        if (p.order !== 'together') for (let b = 1; b < nb; b++) { const off = b * p.strike / nb; if (off > t0 && off <= t1) this.strikeBowl(p, b); }
+        this.sinceStrike = t1;
+        if (t1 >= p.strike) {   // 新的一輪
+          this.sinceStrike = t1 - p.strike;
+          if (p.order === 'together') { env.fill(1); this.knock(p); } else this.strikeBowl(p, 0);
+        }
       } else env.fill(1);
       for (let j = 0; j < bowl.length; j++) tgt[j] *= env[j];
     }
@@ -178,7 +200,7 @@ class Engine extends AudioWorkletProcessor {
       this.osc(R, this.reR, this.imR, k, TAU * fr / sr, a0, da, n);
     }
     if (switching && peak < 1e-4) {   // 舊音色淡完了，換新音色
-      this.cur = p.mode; this.amp.fill(0); env.fill(1); this.sinceStrike = 0;
+      this.cur = p.mode; this.amp.fill(0); env.fill(1); this.sinceStrike = 0; this.nb = 0;
       if (p.mode === 'chant') { this.ci = 0; this.ct = 0; this.done = false; this.report(); }
       if (p.mode === 'bowl' && p.strike > 0) this.strike(p);
     }

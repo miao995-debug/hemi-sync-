@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#16161a">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=0.3.2">
+<link rel="stylesheet" href="style.css?v=0.4.0">
 <title>賽博雷音</title>
 </head>
 <body>
@@ -46,6 +46,10 @@
           <option>OpenSwim Pro</option><option>Bose QC</option><option>其他</option>
         </select>
       </label>
+    </div>
+    <div id="setsRow" class="field" hidden>
+      <span class="lbl">我的缽組 <span class="muted small">點一下就換成那組缽並開始播放</span></span>
+      <div id="sets" class="chips"></div>
     </div>
     <p class="muted small">先把手機音量調低再播放。頭暈、耳鳴、頭痛就停。</p>
   </section>
@@ -102,6 +106,25 @@
   <!-- 頌缽 -->
   <section class="card" id="bowlCard" hidden>
     <h2>頌缽</h2>
+    <div class="field">
+      <span class="lbl">缽數</span>
+      <div class="seg" id="bowlN" role="group" aria-label="缽數">
+        <button data-n="1">1</button><button data-n="2">2</button><button data-n="3">3</button><button data-n="4">4</button>
+      </div>
+    </div>
+    <div id="bowlRows"></div>
+    <div id="bowlMulti" hidden>
+      <label class="field">
+        <span class="lbl">敲法</span>
+        <select id="bowlOrder">
+          <option value="roll">輪流敲（一個接一個）</option>
+          <option value="together">同時敲</option>
+        </select>
+      </label>
+      <label class="inline"><input type="checkbox" id="bowlAlign"> 拍頻對齊</label>
+      <p id="alignInfo" class="muted small"></p>
+      <p class="muted small">每個缽、每個泛音在右耳都比左耳高差頻，幾個缽一起響也守得住腦中繞。缽與缽之間的「嗡—嗡—」左右耳相同，不改變差頻；拍頻對齊會把副缽微調（最多 3%），讓這個起伏也剛好等於差頻；五度、八度這類音程的泛音彼此離得遠，本來就不太拍打，對齊主要用在同音或音高相近的缽。敲法要在「每 n 秒敲一下」時才有作用。</p>
+    </div>
     <label class="field">
       <span class="lbl">奏法</span>
       <select id="strike">
@@ -137,6 +160,12 @@
       <span class="ends small muted"><span>平穩</span><span>嗡嗡顫</span></span>
     </label>
     <p class="muted small">共振頻率就是缽的基音，其餘泛音不是整數倍，這是缽聲的來源。顫動是缽自己的「嗡—嗡—」，比 4 Hz 慢，和腦中繞是兩回事；太強可能蓋過腦中繞的感覺。</p>
+    <div class="row gap wrap">
+      <button id="saveSet">存成缽組</button>
+      <button id="manageSets" aria-pressed="false">管理缽組</button>
+    </div>
+    <p class="muted small">缽組會記住：共振頻率、差頻、缽數與各缽音程音量、敲法、拍頻對齊、奏法、槌、敲擊聲、亮度、顫動。存在這支手機裡。</p>
+    <ul id="setList" class="points" hidden></ul>
   </section>
 
   <!-- 口型 -->
@@ -217,7 +246,7 @@
   <button id="recBtn">記錄共振點</button>
 </nav>
 
-<script type="module" src="app.js?v=0.3.2"></script>
-<p class="ver muted small">v0.3.2</p>
+<script type="module" src="app.js?v=0.4.0"></script>
+<p class="ver muted small">v0.4.0</p>
 </body>
 </html>

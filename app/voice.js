@@ -84,6 +84,46 @@ export function bowlParts(f0, bright, wobble) {
   return out;
 }
 
+/* ---------- 多缽 ----------
+   bowls: [{ r: 頻率比（主缽＝1）, v: 音量 0–1 }]，第 0 個是主缽。每個缽固定佔 12 個成分（BOWL_N）。
+   右耳的每個成分照樣整組 +差頻，所以幾個缽都一樣守住差頻。 */
+export const MAX_BOWLS = 4, BOWL_N = BOWL_RATIOS.length * 2;
+// 副缽的音程（相對主缽）
+export const BOWL_IV = [
+  ['1/2', 1 / 2, '低八度'], ['2/3', 2 / 3, '低五度'], ['1', 1, '同音'], ['6/5', 6 / 5, '小三度'], ['5/4', 5 / 4, '大三度'],
+  ['4/3', 4 / 3, '四度'], ['3/2', 3 / 2, '五度'], ['2', 2, '八度'],
+];
+// 拍頻對齊：把副缽微調（最多 ±3%），讓它和主缽之間最響的一對相近泛音剛好差 beat Hz。
+// 回傳 { factor, fa, fb }（fa 主缽的泛音、fb 副缽調整後的泛音）；對不到就 factor 1、fa null
+// 只看夠響的泛音對（兩者相對振幅乘積 ≥ ALIGN_MIN_W），太弱的對齊了也聽不出來
+export const ALIGN_MAX = 0.03, ALIGN_MIN_W = 0.01;
+export function alignBowl(f0, r, bright, beat) {
+  const p = 1.8 - 1.2 * bright;
+  let best = null;
+  if (beat > 0) for (const ri of BOWL_RATIOS) for (const rj of BOWL_RATIOS) {
+    const fa = ri * f0, fb = rj * r * f0, w = Math.pow(ri, -p) * Math.pow(rj, -p);
+    for (const t of [fa - beat, fa + beat]) {
+      const factor = t / fb, dev = Math.abs(factor - 1);
+      if (dev > ALIGN_MAX || w < ALIGN_MIN_W) continue;
+      if (!best || w > best.w * 1.0001 || (w > best.w * 0.9999 && dev < best.dev)) best = { factor, fa, fb: t, w, dev };
+    }
+  }
+  return best ? { factor: best.factor, fa: best.fa, fb: best.fb } : { factor: 1, fa: null, fb: null };
+}
+// 每個缽實際的頻率比（含拍頻對齊）
+export function bowlRatios(f0, bright, bowls, beat, align) {
+  return bowls.map((b, i) => (i > 0 && align ? b.r * alignBowl(f0, b.r, bright, beat).factor : b.r));
+}
+// 所有缽的成分；rs 是實際頻率比。低音的缽餘音長（衰減時間 × (1/r)^0.6），主缽不變
+export function bowlSet(f0, bright, wobble, rs, vs) {
+  const out = [];
+  rs.forEach((r, b) => {
+    const tm = Math.pow(1 / r, 0.6), v = vs[b];
+    for (const c of bowlParts(f0 * r, bright, wobble)) out.push({ f: c.f, a: c.a * v, tau: c.tau * tm, b });
+  });
+  return out;
+}
+
 export const MAX_PARTIALS = 128;   // 基頻 40 Hz 時仍能涵蓋到 5000 Hz
 export function partialCount(f0, sampleRate) {
   return Math.max(1, Math.min(MAX_PARTIALS, Math.floor(Math.min(5000, sampleRate * 0.45) / f0)));

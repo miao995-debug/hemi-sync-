@@ -1,8 +1,8 @@
 // 賽博雷音：介面
 // 版本號：每次發布都要改這裡、index.html、engine.js 的 ?v=，避免手機用到快取的舊檔
-import { F_MIN, F_MAX, formants, envelope, partialAmp, partialCount, bowlParts, tuneFormants, padPos, VOWELS } from './voice.js?v=0.3.2';
-import { parseIAST, KEYS, hasHan, zhMap } from './chant.js?v=0.3.2';
-const VERSION = '0.3.2';
+import { F_MIN, F_MAX, formants, envelope, partialAmp, partialCount, bowlSet, bowlRatios, alignBowl, BOWL_IV, MAX_BOWLS, tuneFormants, padPos, VOWELS } from './voice.js?v=0.4.0';
+import { parseIAST, KEYS, hasHan, zhMap } from './chant.js?v=0.4.0';
+const VERSION = '0.4.0';
 
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
@@ -14,7 +14,7 @@ const a0 = VOWELS.find(v => v.v === 'a');
 const DEF = {
   mode: 'tone', f0: 200, delta: 4, x: a0.x, y: a0.y, nasal: 0, round: 0, tune: 0,
   chantText: '', rate: 3, legato: 0, loop: true, ox: 0, oy: 0,
-  bright: 40, wobble: 40, strike: 0, knock: 50, mallet: 'soft',
+  bright: 40, wobble: 40, strike: 0, knock: 50, mallet: 'soft', bowls: [], bowlOrder: 'roll', bowlAlign: false,
   bal: 0, mix: 0, vol: 35, limit: 30, headset: 'OpenSwim Pro', fine: false,
 };
 function load(key, def) {
@@ -28,6 +28,17 @@ let saveTimer = 0;
 function saveSoon() { clearTimeout(saveTimer); saveTimer = setTimeout(() => store(SKEY, S), 300); }
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+/* ---------- 多缽 ----------
+   S.bowls 只放副缽（主缽就是共振頻率）：{ iv: 音程或 'hz', hz: 自訂頻率, v: 音量 % } */
+S.bowls = Array.isArray(S.bowls) ? S.bowls.map(b => Object.assign({}, b)) : [];   // 複製一份，別改到 DEF
+const IVR = Object.fromEntries(BOWL_IV.map(([k, r]) => [k, r]));
+const BOWL_DEF = [{ iv: '3/2', hz: 300, v: 70 }, { iv: '2', hz: 400, v: 60 }, { iv: '1/2', hz: 100, v: 70 }];
+const extraRatio = b => (b.iv === 'hz' ? clamp(+b.hz || S.f0, F_MIN, F_MAX * 2) / S.f0 : IVR[b.iv] || 1);
+// 給引擎的缽清單：第 0 個是主缽
+function bowlList() {
+  return [{ r: 1, v: 1 }].concat(S.bowls.slice(0, MAX_BOWLS - 1).map(b => ({ r: extraRatio(b), v: clamp(+b.v, 0, 100) / 100 })));
+}
 
 /* ---------- 音訊 ---------- */
 let ctx = null, node = null, playing = false, endAt = 0;
@@ -64,7 +75,7 @@ function engineParams() {
     chantId: chant.id, seek: seekTo, seekN,
     mode: S.mode, f0: S.f0, delta: S.delta, F: voiceTract().F, nasal: S.nasal / 100, sharp: S.tune / 100,
     bright: S.bright / 100, wobble: S.wobble / 100, strike: S.strike,
-    knock: S.knock / 100, mallet: S.mallet,
+    knock: S.knock / 100, mallet: S.mallet, bowls: bowlList(), order: S.bowlOrder, align: !!S.bowlAlign,
     gL: b > 0 ? 1 - b : 1, gR: b < 0 ? 1 + b : 1, mix: S.mix / 100,
   };
 }
@@ -368,16 +379,18 @@ function drawSpec() {
     g.fillStyle = mute; g.textAlign = 'left'; g.textBaseline = 'top';
     p.F.forEach((F, i) => g.fillText('F' + (i + 1), X(F) + 3, 2));
   } else if (S.mode === 'bowl') {
-    const parts = bowlParts(S.f0, p.bright, p.wobble);
+    const bl = p.bowls, parts = bowlSet(S.f0, p.bright, p.wobble, bowlRatios(S.f0, p.bright, bl, S.delta, p.align), bl.map(b => b.v));
     const am = Math.max(...parts.map(c => c.a));
     g.strokeStyle = acc; g.lineWidth = 2;
     for (const c of parts) {
       if (c.a <= 0 || c.f > FMAXV) continue;
       const db = Math.max(floorDb, 20 * Math.log10(c.a / am));
+      g.globalAlpha = c.b ? 0.5 : 1;   // 淡色是副缽
       g.beginPath(); g.moveTo(X(c.f), Y(floorDb)); g.lineTo(X(c.f), Y(db)); g.stroke();
     }
+    g.globalAlpha = 1;
     g.fillStyle = mute; g.textAlign = 'left'; g.textBaseline = 'top';
-    g.fillText('缽的泛音：不是整數倍', X(S.f0) + 4, 2);
+    g.fillText(bl.length > 1 ? `${bl.length} 個缽（淡色是副缽）` : '缽的泛音：不是整數倍', X(S.f0) + 4, 2);
   } else {
     g.strokeStyle = acc; g.lineWidth = 2;
     g.beginPath(); g.moveTo(X(S.f0), Y(floorDb)); g.lineTo(X(S.f0), Y(0)); g.stroke();
@@ -402,6 +415,7 @@ function changed() {
   $('#chantCard').hidden = !chanting;
   $('#bowlCard').hidden = !bowl;
   $('#strikeOpts').hidden = !(S.strike > 0);
+  updateBowlUI();
   const title = bowl ? '缽音747' : '賽博雷音';   // 頌缽模式換名字，切走換回來
   document.title = title; $('.top h1').textContent = title;
   $('#voiceCard').hidden = bowl;
@@ -428,6 +442,9 @@ function syncAll() {
   $('#headset').value = S.headset;
   $('#strike').value = String(S.strike);
   $('#mallet').value = S.mallet;
+  $('#bowlOrder').value = S.bowlOrder;
+  $('#bowlAlign').checked = !!S.bowlAlign;
+  renderBowlRows();
   $('#fine').checked = !!S.fine;
   $('#loop').checked = !!S.loop;
   $('#chantText').value = S.chantText || '';
@@ -458,8 +475,8 @@ function snapshot() {
     const { mode, f0, delta, nasal, round, tune, ox, oy, rate, legato, bal, mix } = S, sg = chant.segs[chantPos];
     return { mode, f0, delta, nasal, round, tune, ox, oy, rate, legato, bal, mix, chant: { id: chant.id, line: sg ? sg[5] : 0 } };   // 不存經文
   }
-  const { mode, f0, delta, x, y, nasal, round, tune, bright, wobble, strike, knock, mallet, bal, mix } = S;
-  return { mode, f0, delta, x, y, nasal, round, tune, bright, wobble, strike, knock, mallet, bal, mix };
+  const { mode, f0, delta, x, y, nasal, round, tune, bright, wobble, strike, knock, mallet, bowlOrder, bowlAlign, bal, mix } = S;
+  return { mode, f0, delta, x, y, nasal, round, tune, bright, wobble, strike, knock, mallet, bowls: JSON.parse(JSON.stringify(S.bowls)), bowlOrder, bowlAlign, bal, mix };
 }
 $('#recBtn').onclick = openRec;
 $('#recCancel').onclick = () => { form.hidden = true; };
@@ -480,7 +497,7 @@ function renderPoints() {
   $('#points').innerHTML = list.map(p => {
     const d = new Date(p.t);
     const when = `${d.getMonth() + 1}/${d.getDate()} ${d.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' })}`;
-    const tone = p.s.mode === 'chant' ? `念誦 第 ${p.s.chant.line + 1} 句${p.s.chant.id === chant.id ? '' : '（別段文字）'}` : p.s.mode === 'voice' ? `口型 ${vowelLabel(p.s)}${p.s.tune ? `・共振優先 ${p.s.tune}%` : ''}` : p.s.mode === 'bowl' ? '頌缽' : '單音';
+    const tone = p.s.mode === 'chant' ? `念誦 第 ${p.s.chant.line + 1} 句${p.s.chant.id === chant.id ? '' : '（別段文字）'}` : p.s.mode === 'voice' ? `口型 ${vowelLabel(p.s)}${p.s.tune ? `・共振優先 ${p.s.tune}%` : ''}` : p.s.mode === 'bowl' ? (p.s.bowls && p.s.bowls.length ? `頌缽 ${p.s.bowls.length + 1} 缽` : '頌缽') : '單音';
     return `<li data-id="${p.id}"><div class="info"><div>${esc(p.parts.join('、') || '（未選部位）')}${p.note ? '・' + esc(p.note) : ''}</div>
       <div class="meta">${when}・${tone}・${p.s.f0.toFixed(1)} Hz・差頻 ${p.s.delta} Hz・${esc(p.headset)}</div></div>
       <button data-act="apply">套用</button><button data-act="del" aria-label="刪除">刪除</button></li>`;
@@ -497,18 +514,121 @@ $('#points').onclick = e => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
     return;
   }
-  if (b.dataset.act === 'apply') { Object.assign(S, { tune: DEF.tune, bright: DEF.bright, wobble: DEF.wobble, strike: DEF.strike, knock: DEF.knock, mallet: DEF.mallet }, p.s); syncAll(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+  if (b.dataset.act === 'apply') { Object.assign(S, { tune: DEF.tune, bright: DEF.bright, wobble: DEF.wobble, strike: DEF.strike, knock: DEF.knock, mallet: DEF.mallet, bowls: [], bowlOrder: DEF.bowlOrder, bowlAlign: DEF.bowlAlign }, JSON.parse(JSON.stringify(p.s))); syncAll(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
   if (b.dataset.act === 'del' && confirm('刪除這筆共振點？')) {
     points = points.filter(x => x.id !== id); store(PKEY, points); renderPoints(); redraw();
   }
 };
 $('#export').onclick = () => {
-  const blob = new Blob([JSON.stringify({ app: '賽博雷音', exported: new Date().toISOString(), settings: Object.assign({}, S, { chantText: undefined }), points }, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify({ app: '賽博雷音', exported: new Date().toISOString(), settings: Object.assign({}, S, { chantText: undefined }), points, bowlSets: sets }, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   const d = new Date(), ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
   a.href = URL.createObjectURL(blob); a.download = `leiyin-${ymd}.json`; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 };
+
+/* ---------- 多缽介面 ---------- */
+function renderBowlRows() {
+  const ex = S.bowls;
+  $('#bowlRows').innerHTML = ex.map((b, i) => `<div class="bowlrow" data-i="${i}">
+    <div class="head"><span class="name">第 ${i + 2} 缽</span>
+      <select data-k="iv" aria-label="第 ${i + 2} 缽的音程">${BOWL_IV.map(([k, , n]) => `<option value="${k}">${n}（×${k}）</option>`).join('')}<option value="hz">自訂頻率</option></select>
+      <input type="number" data-k="hz" min="${F_MIN}" max="${F_MAX * 2}" step="0.1" inputmode="decimal" aria-label="第 ${i + 2} 缽的頻率（Hz）"${b.iv === 'hz' ? '' : ' hidden'}>
+      <span class="hz"></span>
+    </div>
+    <label class="field"><span class="lbl">音量 <output>${b.v}%</output></span>
+      <input type="range" data-k="v" min="0" max="100" step="1"></label>
+  </div>`).join('');
+  $$('#bowlRows .bowlrow').forEach((row, i) => {
+    const b = ex[i];
+    row.querySelector('[data-k=iv]').value = b.iv;
+    row.querySelector('[data-k=hz]').value = b.hz;
+    row.querySelector('[data-k=v]').value = b.v;
+  });
+}
+$('#bowlRows').addEventListener('input', e => {
+  const row = e.target.closest('.bowlrow'); if (!row) return;
+  const b = S.bowls[+row.dataset.i], k = e.target.dataset.k; if (!b) return;
+  if (k === 'iv') {
+    const hzNow = extraRatio(b) * S.f0;
+    b.iv = e.target.value;
+    const hz = row.querySelector('[data-k=hz]'); hz.hidden = b.iv !== 'hz';
+    if (b.iv === 'hz') { b.hz = +hzNow.toFixed(1); hz.value = b.hz; }   // 從目前的音高開始改
+  } else if (k === 'hz') {
+    const v = parseFloat(e.target.value); if (!(v >= F_MIN && v <= F_MAX * 2)) return;
+    b.hz = v;
+  } else if (k === 'v') { b.v = +e.target.value; row.querySelector('output').textContent = b.v + '%'; }
+  changed();
+});
+$('#bowlN').onclick = e => {
+  const btn = e.target.closest('button'); if (!btn) return;
+  const n = +btn.dataset.n, ex = S.bowls;
+  while (ex.length < n - 1) ex.push(Object.assign({}, BOWL_DEF[ex.length]));
+  ex.length = n - 1;
+  renderBowlRows(); changed();
+};
+$('#bowlOrder').onchange = e => { S.bowlOrder = e.target.value; changed(); };
+$('#bowlAlign').onchange = e => { S.bowlAlign = e.target.checked; changed(); };
+const pct = d => (d >= 0 ? '+' : '−') + Math.abs(d * 100).toFixed(2) + '%';
+function updateBowlUI() {
+  const ex = S.bowls, n = ex.length + 1;
+  $$('#bowlN button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.n === n)));
+  $('#bowlMulti').hidden = n < 2;
+  const bl = bowlList(), rs = bowlRatios(S.f0, S.bright / 100, bl, S.delta, S.bowlAlign);
+  $$('#bowlRows .bowlrow').forEach((row, i) => { const el = row.querySelector('.hz'); if (el && rs[i + 1]) el.textContent = `${(rs[i + 1] * S.f0).toFixed(1)} Hz`; });
+  $('#alignInfo').innerHTML = !S.bowlAlign || n < 2 ? '' : ex.map((b, i) => {
+    if (!(S.delta > 0)) return `第 ${i + 2} 缽：差頻是 0，不用對齊`;
+    const a = alignBowl(S.f0, bl[i + 1].r, S.bright / 100, S.delta);
+    return a.fa == null ? `第 ${i + 2} 缽：和主缽沒有相近的泛音，本來就幾乎不互相拍打，維持原音程`
+      : `第 ${i + 2} 缽微調 ${pct(a.factor - 1)}：主缽 ${a.fa.toFixed(1)} Hz 與它的 ${a.fb.toFixed(1)} Hz 相差 ${S.delta} Hz`;
+  }).join('<br>');
+}
+
+/* ---------- 缽組：記住調好的缽，一鍵啟動 ---------- */
+const BKEY = 'leiyin-bowlsets';
+const SET_KEYS = ['f0', 'delta', 'bright', 'wobble', 'strike', 'knock', 'mallet', 'bowls', 'bowlOrder', 'bowlAlign'];
+let sets = load(BKEY, []);
+if (!Array.isArray(sets)) sets = [];
+const pickSet = () => JSON.parse(JSON.stringify(Object.fromEntries(SET_KEYS.map(k => [k, S[k]]))));
+function setMeta(st) {
+  const n = (st.bowls || []).length + 1;
+  return `${(+st.f0).toFixed(1)} Hz・${n} 缽・${+st.strike ? `每 ${st.strike} 秒敲` : '磨缽'}・差頻 ${st.delta} Hz`;
+}
+function renderSets() {
+  $('#setsRow').hidden = !sets.length;
+  $('#sets').innerHTML = sets.map(x => `<button type="button" data-id="${x.id}" title="${esc(setMeta(x.s))}">▶ ${esc(x.name)}</button>`).join('');
+  $('#setList').innerHTML = sets.map(x => `<li data-id="${x.id}"><div class="info"><div>${esc(x.name)}</div><div class="meta">${esc(setMeta(x.s))}</div></div>
+    <button data-act="over">覆蓋</button><button data-act="ren">改名</button><button data-act="del">刪除</button></li>`).join('')
+    || '<li class="muted small">還沒有缽組。調好之後按「存成缽組」。</li>';
+}
+function storeSets() { store(BKEY, sets); renderSets(); }
+$('#saveSet').onclick = () => {
+  const name = (prompt('幫這組缽取個名字', `缽組 ${sets.length + 1}`) || '').trim(); if (!name) return;
+  const old = sets.find(x => x.name === name);
+  if (old) { if (!confirm(`已經有「${name}」，要用目前的設定覆蓋嗎？`)) return; old.s = pickSet(); }
+  else sets.push({ id: Date.now(), name, s: pickSet() });
+  storeSets();
+};
+$('#manageSets').onclick = e => {
+  const on = $('#setList').hidden;
+  $('#setList').hidden = !on; e.currentTarget.setAttribute('aria-pressed', String(on));
+};
+$('#setList').onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const x = sets.find(s => s.id === +b.closest('li').dataset.id); if (!x) return;
+  if (b.dataset.act === 'over' && confirm(`用目前的設定覆蓋「${x.name}」？`)) { x.s = pickSet(); storeSets(); }
+  if (b.dataset.act === 'ren') { const nm = (prompt('新名字', x.name) || '').trim(); if (nm) { x.name = nm; storeSets(); } }
+  if (b.dataset.act === 'del' && confirm(`刪除缽組「${x.name}」？`)) { sets = sets.filter(s => s !== x); storeSets(); }
+};
+// 一鍵啟動：換成那組缽、切到頌缽、還沒播放就開始播
+$('#sets').onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const x = sets.find(s => s.id === +b.dataset.id); if (!x) return;
+  Object.assign(S, { bowls: [], bowlOrder: DEF.bowlOrder, bowlAlign: DEF.bowlAlign }, JSON.parse(JSON.stringify(x.s)), { mode: 'bowl' });
+  syncAll();
+  if (!playing) start();
+};
+renderSets();
 
 syncAll();
 renderPoints();
