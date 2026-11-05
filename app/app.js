@@ -1,8 +1,8 @@
 // 賽博雷音：介面
 // 版本號：每次發布都要改這裡、index.html、engine.js 的 ?v=，避免手機用到快取的舊檔
-import { F_MIN, F_MAX, formants, envelope, partialAmp, partialCount, bowlSet, bowlRatios, alignBowl, BOWL_IV, MAX_BOWLS, tuneFormants, padPos, VOWELS } from './voice.js?v=0.4.0';
-import { parseIAST, KEYS, hasHan, zhMap } from './chant.js?v=0.4.0';
-const VERSION = '0.4.0';
+import { F_MIN, F_MAX, formants, envelope, partialAmp, partialCount, bowlSet, bowlRatios, alignBowl, BOWL_IV, MAX_BOWLS, tuneFormants, padPos, VOWELS } from './voice.js?v=0.4.1';
+import { parseIAST, KEYS, hasHan, zhMap } from './chant.js?v=0.4.1';
+const VERSION = '0.4.1';
 
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
@@ -533,8 +533,11 @@ function renderBowlRows() {
   $('#bowlRows').innerHTML = ex.map((b, i) => `<div class="bowlrow" data-i="${i}">
     <div class="head"><span class="name">第 ${i + 2} 缽</span>
       <select data-k="iv" aria-label="第 ${i + 2} 缽的音程">${BOWL_IV.map(([k, , n]) => `<option value="${k}">${n}（×${k}）</option>`).join('')}<option value="hz">自訂頻率</option></select>
-      <input type="number" data-k="hz" min="${F_MIN}" max="${F_MAX * 2}" step="0.1" inputmode="decimal" aria-label="第 ${i + 2} 缽的頻率（Hz）"${b.iv === 'hz' ? '' : ' hidden'}>
       <span class="hz"></span>
+    </div>
+    <div class="hzbox"${b.iv === 'hz' ? '' : ' hidden'}>
+      <input type="range" data-k="hz" min="0" max="1000" step="1" aria-label="第 ${i + 2} 缽的頻率">
+      <div class="row gap nudges">${[-1, -0.1, 0.1, 1].map(d => `<button type="button" data-hn="${d}">${d > 0 ? '+' : '−'}${Math.abs(d)}</button>`).join('')}</div>
     </div>
     <label class="field"><span class="lbl">音量 <output>${b.v}%</output></span>
       <input type="range" data-k="v" min="0" max="100" step="1"></label>
@@ -542,22 +545,30 @@ function renderBowlRows() {
   $$('#bowlRows .bowlrow').forEach((row, i) => {
     const b = ex[i];
     row.querySelector('[data-k=iv]').value = b.iv;
-    row.querySelector('[data-k=hz]').value = b.hz;
+    row.querySelector('[data-k=hz]').value = hzToSlider(+b.hz || S.f0);
     row.querySelector('[data-k=v]').value = b.v;
   });
 }
+// 副缽自訂頻率的橫條：對數刻度 40–2000 Hz，和共振頻率橫條同樣的手感；細調用按鈕
+const HZ_LO = F_MIN, HZ_HI = F_MAX * 2, LOGH = Math.log(HZ_HI / HZ_LO);
+const hzToSlider = f => Math.round(Math.log(clamp(f, HZ_LO, HZ_HI) / HZ_LO) / LOGH * 1000);
+const sliderToHz = t => Math.round(HZ_LO * Math.exp(t / 1000 * LOGH) * 10) / 10;
+$('#bowlRows').addEventListener('click', e => {
+  const btn = e.target.closest('[data-hn]'); if (!btn) return;
+  const row = btn.closest('.bowlrow'), b = S.bowls[+row.dataset.i]; if (!b) return;
+  b.hz = clamp(Math.round(((+b.hz || S.f0) + parseFloat(btn.dataset.hn)) * 10) / 10, HZ_LO, HZ_HI);
+  row.querySelector('[data-k=hz]').value = hzToSlider(b.hz);
+  changed();
+});
 $('#bowlRows').addEventListener('input', e => {
   const row = e.target.closest('.bowlrow'); if (!row) return;
   const b = S.bowls[+row.dataset.i], k = e.target.dataset.k; if (!b) return;
   if (k === 'iv') {
     const hzNow = extraRatio(b) * S.f0;
     b.iv = e.target.value;
-    const hz = row.querySelector('[data-k=hz]'); hz.hidden = b.iv !== 'hz';
-    if (b.iv === 'hz') { b.hz = +hzNow.toFixed(1); hz.value = b.hz; }   // 從目前的音高開始改
-  } else if (k === 'hz') {
-    const v = parseFloat(e.target.value); if (!(v >= F_MIN && v <= F_MAX * 2)) return;
-    b.hz = v;
-  } else if (k === 'v') { b.v = +e.target.value; row.querySelector('output').textContent = b.v + '%'; }
+    row.querySelector('.hzbox').hidden = b.iv !== 'hz';
+    if (b.iv === 'hz') { b.hz = clamp(+hzNow.toFixed(1), HZ_LO, HZ_HI); row.querySelector('[data-k=hz]').value = hzToSlider(b.hz); }   // 從目前的音高開始改
+  } else if (k === 'hz') b.hz = sliderToHz(+e.target.value); else if (k === 'v') { b.v = +e.target.value; row.querySelector('output').textContent = b.v + '%'; }
   changed();
 });
 $('#bowlN').onclick = e => {

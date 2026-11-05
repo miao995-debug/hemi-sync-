@@ -116,7 +116,9 @@ summary { cursor: pointer; color: var(--mute); font-size: 14px; }
 .bowlrow .head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .bowlrow .head .name { font-size: 14px; min-width: 3.5em; }
 .bowlrow .head select { flex: 1; min-width: 8em; }
-.bowlrow .head input[type=number] { width: 6.5em; }
+.bowlrow .hzbox { margin: 6px 0 2px; }
+.bowlrow .hzbox input[type=range] { width: 100%; }
+.bowlrow .hzbox .nudges { margin-top: 4px; }
 .bowlrow .hz { color: var(--mute); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .chips button { padding: 8px 14px; border-radius: 999px; }
